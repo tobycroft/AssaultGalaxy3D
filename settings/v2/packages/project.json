@@ -1,5 +1,5 @@
 {
-  "launchScene": "db://assets/scenes/Home.scene",
+  "launchScene": "db://assets/Home/Home.scene",
   "general": {
     "highQuality": true,
     "renderPipeline": "22a135d0-b2ef-4c1b-86d2-5bbbd88e4875"
