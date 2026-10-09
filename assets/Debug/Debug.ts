@@ -12,7 +12,6 @@ import {
     UITransform,
     Label,
     Graphics,
-    Canvas,
     geometry,
     MeshRenderer,
     DirectionalLight,
@@ -27,40 +26,25 @@ const UI_LAYER = 33554432;
 const MODEL_LAYER = 1;
 
 // 预览时模型统一缩放到的大致尺寸（世界单位）
-const TARGET_MODEL_SIZE = 400;
+const TARGET_MODEL_SIZE = 380;
 
 @ccclass('Debug')
 export class Debug extends Component {
     private modelRoot: Node | null = null;
     private currentModel: Node | null = null;
-    private modelNameLabel: Label | null = null;
     private statusLabel: Label | null = null;
-    private listPanel: Node | null = null;
     private spin = true;
 
     onLoad(): void {
-        this.ensureCameraRendersModel();
         this.addLights();
-        this.buildUI();
-
-        this.modelRoot = new Node('ModelRoot');
-        this.modelRoot.layer = MODEL_LAYER;
-        // 放在 UI 平面之后，避免与 UI 元素发生深度冲突
-        this.modelRoot.setPosition(0, 0, -50);
-        this.node.addChild(this.modelRoot);
+        this.buildStaticUI();
+        this.setupModelRoot();
+        this.loadModels();
     }
 
     update(dt: number): void {
         if (this.spin && this.currentModel) {
             this.currentModel.rotate(Quat.fromAxisAngle(new Quat(), Vec3.UP, dt * 0.6));
-        }
-    }
-
-    /** 确保 UI 相机也能渲染位于 DEFAULT 层的 3D 模型 */
-    private ensureCameraRendersModel(): void {
-        const canvas = this.getComponent(Canvas);
-        if (canvas && canvas.cameraComponent) {
-            canvas.cameraComponent.visibility |= MODEL_LAYER;
         }
     }
 
@@ -80,18 +64,53 @@ export class Debug extends Component {
         makeLight('FillLight', -30, -120, 0, 25000);
     }
 
-    /** 构建静态调试界面 UI */
-    private buildUI(): void {
+    /** 构建静态调试界面 UI（标题 / 状态 / 返回） */
+    private buildStaticUI(): void {
         const root = this.node; // Canvas
 
-        this.modelNameLabel = this.createLabel(root, 'Title', 'Debug 调试面板', 0, 320, 40);
-        this.createButton(root, 'BtnBack', '返回', 560, 330, 140, 56, () => this.onBack());
-        this.statusLabel = this.createLabel(root, 'Status', '请选择左侧模型进行预览', 0, 250, 26, new Color(180, 200, 230, 255));
+        this.createLabel(root, 'Title', 'Debug · 模型预览', 0, 320, 40);
+        this.createButton(root, 'BtnBack', '← 返回首页', -560, 320, 200, 56, () => this.onBack());
+        this.statusLabel = this.createLabel(root, 'Status', '正在加载模型列表...', 0, 270, 26, new Color(180, 200, 230, 255));
 
-        // 几个按钮，第一个是“模型”
-        this.createButton(root, 'BtnModels', '模型', -560, 200, 200, 56, () => this.onShowModels());
-        this.createButton(root, 'BtnLevel', '关卡', -560, 120, 200, 56, () => this.setStatus('关卡功能开发中'));
-        this.createButton(root, 'BtnAudio', '音效', -560, 40, 200, 56, () => this.setStatus('音效功能开发中'));
+        // 模型列表标题
+        this.createLabel(root, 'ListCaption', '现有模型', -400, 210, 30, new Color(120, 200, 255, 255));
+    }
+
+    /** 模型预览根节点：放在画面右侧，位于 UI 平面之后避免深度冲突 */
+    private setupModelRoot(): void {
+        this.modelRoot = new Node('ModelRoot');
+        this.modelRoot.layer = MODEL_LAYER;
+        this.modelRoot.setPosition(320, 0, -50);
+        this.node.addChild(this.modelRoot);
+    }
+
+    /** 动态读取 resources/Model 下的所有模型，直接在界面上生成按钮 */
+    private loadModels(): void {
+        resources.loadDir('Model', Prefab, (err, assets) => {
+            if (err) {
+                this.setStatus('加载模型列表失败: ' + err.message);
+                return;
+            }
+            if (!assets || assets.length === 0) {
+                this.setStatus('未找到任何模型（请将模型放入 assets/resources/Model 目录）');
+                return;
+            }
+            this.showModelButtons(assets as Prefab[]);
+            this.setStatus('共找到 ' + assets.length + ' 个模型，点击左侧按钮预览');
+        });
+    }
+
+    /** 在界面左侧直接列出每个模型的按钮 */
+    private showModelButtons(prefabs: Prefab[]): void {
+        const startY = 150;
+        const gap = 74;
+        prefabs.forEach((prefab, i) => {
+            const y = startY - i * gap;
+            const label = prefab.name || 'model_' + i;
+            this.createButton(this.node, 'Btn_' + label, label, -400, y, 300, 60, () => {
+                this.displayModel(prefab);
+            });
+        });
     }
 
     private createLabel(
@@ -145,7 +164,7 @@ export class Debug extends Component {
         lut.setContentSize(w, h);
         const l = lab.addComponent(Label);
         l.string = label;
-        l.fontSize = 28;
+        l.fontSize = 26;
         l.color = new Color(255, 255, 255, 255);
         l.horizontalAlign = Label.HorizontalAlign.CENTER;
         l.verticalAlign = Label.VerticalAlign.CENTER;
@@ -173,75 +192,18 @@ export class Debug extends Component {
         director.loadScene('Home');
     }
 
-    /** 点击“模型”按钮：动态列出 resources/Model 下的所有模型 */
-    private onShowModels(): void {
-        this.setStatus('正在加载模型列表...');
-        resources.loadDir('Model', Prefab, (err, assets) => {
-            if (err) {
-                this.setStatus('加载模型列表失败: ' + err.message);
-                return;
-            }
-            if (!assets || assets.length === 0) {
-                this.setStatus('未找到任何模型（请将模型放入 assets/resources/Model 目录）');
-                return;
-            }
-            this.showModelList(assets as Prefab[]);
-        });
-    }
-
-    /** 展示模型列表弹窗 */
-    private showModelList(prefabs: Prefab[]): void {
-        this.hideModelList();
-        const panel = new Node('ModelListPanel');
-        panel.layer = UI_LAYER;
-        const put = panel.addComponent(UITransform);
-        put.setContentSize(420, 520);
-        put.setAnchorPoint(0.5, 0.5);
-        const pg = panel.addComponent(Graphics);
-        pg.fillColor = new Color(10, 14, 28, 240);
-        pg.roundRect(-210, -260, 420, 520, 16);
-        pg.fill();
-
-        this.createLabel(panel, 'ListTitle', '选择模型', 0, 220, 30);
-        this.createButton(panel, 'BtnClose', '关闭', 175, 220, 90, 44, () => this.hideModelList());
-
-        const startY = 160;
-        const gap = 64;
-        prefabs.forEach((prefab, i) => {
-            const y = startY - i * gap;
-            const label = prefab.name || 'model_' + i;
-            this.createButton(panel, 'Item_' + label, label, 0, y, 360, 52, () => {
-                this.displayModel(prefab);
-                this.hideModelList();
-            });
-        });
-
-        this.node.addChild(panel);
-        this.listPanel = panel;
-        this.setStatus('共找到 ' + prefabs.length + ' 个模型');
-    }
-
-    private hideModelList(): void {
-        if (this.listPanel) {
-            this.listPanel.destroy();
-            this.listPanel = null;
-        }
-    }
-
     /** 显示选中的 3D 模型 */
     private displayModel(prefab: Prefab): void {
         this.clearModel();
         const model = instantiate(prefab);
         this.modelRoot!.addChild(model);
-        // 等一帧让世界矩阵更新后再计算包围盒并自适应缩放
         this.currentModel = model;
         this.spin = false;
         this.scheduleOnce(() => {
             this.fitModel(model);
             this.spin = true;
         }, 0);
-        if (this.modelNameLabel) this.modelNameLabel.string = '当前模型: ' + (prefab.name || 'unknown');
-        this.setStatus('已加载模型');
+        this.setStatus('已加载模型: ' + (prefab.name || 'unknown'));
     }
 
     private clearModel(): void {
