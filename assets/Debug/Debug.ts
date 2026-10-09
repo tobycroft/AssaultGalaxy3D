@@ -15,7 +15,6 @@ import {
     geometry,
     MeshRenderer,
     DirectionalLight,
-    EventType,
 } from 'cc';
 
 const { ccclass } = _decorator;
@@ -88,12 +87,12 @@ export class Debug extends Component {
      * 按钮节点已置于 Debug 场景中，点击事件通过编辑器绑定到本方法。
      */
     public onSelectSpaceshipStandard(): void {
-        this.loadAndShow('Model/spaceship/default_spaceship', 'Spaceship · 标准版');
+        this.loadAndShow('Model/spaceship/default_spaceship/default_spaceship', 'Spaceship · 标准版');
     }
 
     /** 点击左侧“高清版”飞船按钮：加载并预览 default_hq 模型 */
     public onSelectSpaceshipHQ(): void {
-        this.loadAndShow('Model/spaceship/default_hq', 'Spaceship · 高清版');
+        this.loadAndShow('Model/spaceship/default_hq/default_hq', 'Spaceship · 高清版');
     }
 
     /** 按资源路径加载飞船 Prefab 并在右侧预览区展示 */
@@ -101,8 +100,8 @@ export class Debug extends Component {
         this.setStatus('加载中: ' + label + ' …');
         resources.load(path, Prefab, (err, prefab) => {
             if (err || !prefab) {
-                // glb 在 Cocos 3.x 中以 cc.Prefab 形式存在于 resources 下，
-                // resources.load(path, Prefab) 是正确写法；若仍失败，多半是路径或资源类型不匹配。
+                // glb 导入后 Prefab 是其子资源，路径必须带上子资源名：
+                // Model/spaceship/default_spaceship/default_spaceship（即 glb 文件名/同名 prefab 子资源）。
                 console.error('[Debug] 加载模型失败:', label, 'path =', path, 'err =', err);
                 this.setStatus('✘ 加载失败: ' + label + '（' + ((err && err.message) || '资源不存在或类型不匹配') + '）');
                 return;
@@ -169,7 +168,7 @@ export class Debug extends Component {
         btn.addChild(lab);
 
         if (onClick) {
-            btn.on(EventType.TOUCH_END, onClick, this);
+            btn.on(Node.EventType.TOUCH_END, onClick, this);
         }
         parent.addChild(btn);
         return btn;
