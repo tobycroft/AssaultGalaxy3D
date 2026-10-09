@@ -1,0 +1,239 @@
+{
+  "ver": "2.3.14",
+  "importer": "gltf",
+  "imported": true,
+  "uuid": "91441f37-ed49-4ed9-9157-531ec5bfd2fd",
+  "files": [],
+  "subMetas": {
+    "73357": {
+      "importer": "gltf-embeded-image",
+      "uuid": "91441f37-ed49-4ed9-9157-531ec5bfd2fd@73357",
+      "displayName": "",
+      "id": "73357",
+      "name": "futuristic+spaceship+3d+model_basecolor.jpg.image",
+      "userData": {
+        "gltfIndex": 0,
+        "fixAlphaTransparencyArtifacts": true,
+        "hasAlpha": false,
+        "type": "texture"
+      },
+      "ver": "1.0.3",
+      "imported": true,
+      "files": [
+        ".jpg",
+        ".json"
+      ],
+      "subMetas": {}
+    },
+    "349e2": {
+      "importer": "gltf-mesh",
+      "uuid": "91441f37-ed49-4ed9-9157-531ec5bfd2fd@349e2",
+      "displayName": "",
+      "id": "349e2",
+      "name": "meshes[0].mesh",
+      "userData": {
+        "gltfIndex": 0,
+        "triangleCount": 336514
+      },
+      "ver": "1.1.1",
+      "imported": true,
+      "files": [
+        ".bin",
+        ".json"
+      ],
+      "subMetas": {}
+    },
+    "dd94a": {
+      "importer": "gltf-embeded-image",
+      "uuid": "91441f37-ed49-4ed9-9157-531ec5bfd2fd@dd94a",
+      "displayName": "",
+      "id": "dd94a",
+      "name": "futuristic+spaceship+3d+model_rm.jpg.image",
+      "userData": {
+        "gltfIndex": 1,
+        "fixAlphaTransparencyArtifacts": true,
+        "hasAlpha": false,
+        "type": "texture"
+      },
+      "ver": "1.0.3",
+      "imported": true,
+      "files": [
+        ".jpg",
+        ".json"
+      ],
+      "subMetas": {}
+    },
+    "e494c": {
+      "importer": "gltf-embeded-image",
+      "uuid": "91441f37-ed49-4ed9-9157-531ec5bfd2fd@e494c",
+      "displayName": "",
+      "id": "e494c",
+      "name": "futuristic+spaceship+3d+model_normal.png.image",
+      "userData": {
+        "gltfIndex": 2,
+        "fixAlphaTransparencyArtifacts": true,
+        "hasAlpha": false,
+        "type": "texture"
+      },
+      "ver": "1.0.3",
+      "imported": true,
+      "files": [
+        ".json",
+        ".png"
+      ],
+      "subMetas": {}
+    },
+    "3effa": {
+      "importer": "texture",
+      "uuid": "91441f37-ed49-4ed9-9157-531ec5bfd2fd@3effa",
+      "displayName": "",
+      "id": "3effa",
+      "name": "UnnamedTexture-0.texture",
+      "userData": {
+        "wrapModeS": "repeat",
+        "wrapModeT": "repeat",
+        "minfilter": "linear",
+        "magfilter": "linear",
+        "mipfilter": "none",
+        "anisotropy": 0,
+        "isUuid": true,
+        "imageUuidOrDatabaseUri": "91441f37-ed49-4ed9-9157-531ec5bfd2fd@73357"
+      },
+      "ver": "1.0.22",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    },
+    "221a5": {
+      "importer": "texture",
+      "uuid": "91441f37-ed49-4ed9-9157-531ec5bfd2fd@221a5",
+      "displayName": "",
+      "id": "221a5",
+      "name": "UnnamedTexture-1.texture",
+      "userData": {
+        "wrapModeS": "repeat",
+        "wrapModeT": "repeat",
+        "minfilter": "linear",
+        "magfilter": "linear",
+        "mipfilter": "none",
+        "anisotropy": 0,
+        "isUuid": true,
+        "imageUuidOrDatabaseUri": "91441f37-ed49-4ed9-9157-531ec5bfd2fd@dd94a"
+      },
+      "ver": "1.0.22",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    },
+    "0089c": {
+      "importer": "texture",
+      "uuid": "91441f37-ed49-4ed9-9157-531ec5bfd2fd@0089c",
+      "displayName": "",
+      "id": "0089c",
+      "name": "UnnamedTexture-2.texture",
+      "userData": {
+        "wrapModeS": "repeat",
+        "wrapModeT": "repeat",
+        "minfilter": "linear",
+        "magfilter": "linear",
+        "mipfilter": "none",
+        "anisotropy": 0,
+        "isUuid": true,
+        "imageUuidOrDatabaseUri": "91441f37-ed49-4ed9-9157-531ec5bfd2fd@e494c"
+      },
+      "ver": "1.0.22",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    },
+    "7bc3f": {
+      "importer": "gltf-material",
+      "uuid": "91441f37-ed49-4ed9-9157-531ec5bfd2fd@7bc3f",
+      "displayName": "",
+      "id": "7bc3f",
+      "name": "tripo_material_a683c5e4-3e9b-4e7c-ba2e-f675349dee46.material",
+      "userData": {
+        "gltfIndex": 0
+      },
+      "ver": "1.0.14",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    },
+    "e2d1b": {
+      "importer": "gltf-scene",
+      "uuid": "91441f37-ed49-4ed9-9157-531ec5bfd2fd@e2d1b",
+      "displayName": "",
+      "id": "e2d1b",
+      "name": "default_spaceship.prefab",
+      "userData": {
+        "gltfIndex": 0
+      },
+      "ver": "1.0.14",
+      "imported": true,
+      "files": [
+        ".json"
+      ],
+      "subMetas": {}
+    }
+  },
+  "userData": {
+    "imageMetas": [
+      {
+        "name": "futuristic+spaceship+3d+model_basecolor.jpg",
+        "uri": "91441f37-ed49-4ed9-9157-531ec5bfd2fd@73357"
+      },
+      {
+        "name": "futuristic+spaceship+3d+model_rm.jpg",
+        "uri": "91441f37-ed49-4ed9-9157-531ec5bfd2fd@dd94a"
+      },
+      {
+        "name": "futuristic+spaceship+3d+model_normal.png",
+        "uri": "91441f37-ed49-4ed9-9157-531ec5bfd2fd@e494c"
+      }
+    ],
+    "lods": {
+      "enable": false,
+      "hasBuiltinLOD": false,
+      "options": [
+        {
+          "screenRatio": 0.25,
+          "faceCount": 1
+        },
+        {
+          "screenRatio": 0.125,
+          "faceCount": 0.25
+        },
+        {
+          "screenRatio": 0.01,
+          "faceCount": 0.1
+        }
+      ]
+    },
+    "assetFinder": {
+      "meshes": [
+        "91441f37-ed49-4ed9-9157-531ec5bfd2fd@349e2"
+      ],
+      "skeletons": [],
+      "textures": [
+        "91441f37-ed49-4ed9-9157-531ec5bfd2fd@3effa",
+        "91441f37-ed49-4ed9-9157-531ec5bfd2fd@221a5",
+        "91441f37-ed49-4ed9-9157-531ec5bfd2fd@0089c"
+      ],
+      "materials": [
+        "91441f37-ed49-4ed9-9157-531ec5bfd2fd@7bc3f"
+      ],
+      "scenes": [
+        "91441f37-ed49-4ed9-9157-531ec5bfd2fd@e2d1b"
+      ]
+    }
+  }
+}
