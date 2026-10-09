@@ -1,0 +1,563 @@
+<div class="mcp-app">
+    <!-- 品牌栏 -->
+    <div class="brand-top">
+        <div class="brand-top-left">
+            <img class="brand-top-logo" src="packages://cocos-mcp/static/icon.png" alt="Cocos MCP Server" />
+            <div class="brand-top-text">
+                <div class="brand-top-name">{{ t('brand_name') }}</div>
+                <div class="brand-top-subtitle">v2.8.0 — AI-powered Cocos Creator development</div>
+            </div>
+        </div>
+        <div class="brand-top-right">
+            <select class="lang-select lang-select-sm" :value="authLang" @change="onLangChange">
+                <option v-for="loc in localeOptions" :key="loc.code" :value="loc.code">{{ loc.label }}</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- 导航 -->
+    <div class="tab-navigation">
+        <button class="tab-button" :class="{ active: activeTab === 'server' }" @click="switchTab('server')">
+            <span class="tab-icon">⚡</span>
+            <span>{{ t('server_tab') }}</span>
+        </button>
+        <button class="tab-button" :class="{ active: activeTab === 'tools' }" @click="switchTab('tools')">
+            <span class="tab-icon">🔧</span>
+            <span>{{ t('tools_tab') }}</span>
+        </button>
+        <button class="tab-button" :class="{ active: activeTab === 'config' }" @click="switchTab('config')">
+            <span class="tab-icon">🔗</span>
+            <span>{{ t('config_tab') }}</span>
+        </button>
+    </div>
+
+    <!-- ====== 服务器 ====== -->
+    <div class="tab-content" v-show="activeTab === 'server'">
+
+        <!-- 状态卡片 -->
+        <div class="status-card" :class="statusClass">
+            <div class="status-card-inner">
+                <div class="status-indicator">
+                    <div class="status-dot" :class="statusClass"></div>
+                    <div class="status-text">
+                        <div class="status-label">{{ serverStatus }}</div>
+                        <div class="status-sub" v-if="serverRunning">{{ t('server_running', settings.port) }}</div>
+                        <div class="status-sub" v-else>{{ t('server_stopped') }}</div>
+                    </div>
+                </div>
+                <div class="status-metrics" v-if="serverRunning">
+                    <div class="metric">
+                        <span class="metric-value">{{ settings.port }}</span>
+                        <span class="metric-label">{{ t('port_label') }}</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-value">{{ connectedClients || 0 }}</span>
+                        <span class="metric-label">{{ t('connections_count') }}</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-value">HTTP</span>
+                        <span class="metric-label">{{ t('transport_type') }}</span>
+                    </div>
+                </div>
+                <div class="status-action">
+                    <ui-button @click="toggleServer" :disabled="isProcessing" class="primary">
+                        {{ serverRunning ? t('stop_server') : t('start_server') }}
+                    </ui-button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 连接信息 -->
+        <div class="connection-card" v-if="serverRunning">
+            <div class="conn-url-label">{{ t('mcp_url') }}</div>
+            <div class="conn-url-row">
+                <code class="conn-url">{{ httpUrl }}</code>
+                <ui-button @click="copyUrl" class="small">{{ t('copy') }}</ui-button>
+            </div>
+            <div class="conn-hint">{{ t('protocol_line') }}</div>
+        </div>
+
+        <!-- 连接测试 (Ping) -->
+        <div class="ping-card" v-if="serverRunning">
+            <div class="ping-inner">
+                <div class="ping-left">
+                    <div class="ping-title">🔍 连接测试</div>
+                    <div class="ping-desc">点击按钮测试 AI 编辑器是否能连接到 MCP 服务器</div>
+                </div>
+                <div class="ping-right">
+                    <button class="ping-btn" onclick="var b=this,i=b.querySelector('span'),l=i.nextElementSibling,r=b.nextElementSibling,p=3000,cu=document.querySelector('.conn-url');cu&&cu.textContent&&(p=parseInt(cu.textContent.match(/:(\d+)\//)[1]||3000));i.textContent='⏳';l.textContent='Pinging...';l.style.color='';r.style.display='none';var ac=new AbortController(),to=setTimeout(function(){ac.abort()},5000);fetch('http://127.0.0.1:'+p+'/health',{signal:ac.signal}).then(function(res){clearTimeout(to);if(!res.ok)throw 'E';return res.json()}).then(function(d){clearTimeout(to);i.textContent='✅';l.textContent='Connected';l.style.color='#15803d';r.style.display='inline-block';r.style.color='#15803d';r.textContent=(d.tools||'?')+' tools';setTimeout(function(){i.textContent='⚡';l.textContent='Ping';l.style.color='';r.style.display='none'},3000)}).catch(function(){clearTimeout(to);i.textContent='❌';l.textContent='Failed';l.style.color='#b91c1c';r.style.display='inline-block';r.style.color='#b91c1c';r.textContent='Unreachable';setTimeout(function(){i.textContent='⚡';l.textContent='Ping';l.style.color='';r.style.display='none'},3000)})">
+                        <span>⚡</span>
+                        <span>Ping</span>
+                    </button>
+                    <span class="ping-result" style="display:none"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 设置 -->
+        <section class="settings-section">
+            <h3>{{ t('server_settings_title') }}</h3>
+            <div class="port-fallback-notice" v-if="portFallback">
+                <div class="port-fallback-title">⚠ {{ t('port_fallback_title', portFallback.requestedPort, portFallback.actualPort) }}</div>
+                <div class="port-fallback-body">{{ t('port_fallback_reason', portFallback.requestedPort) }}</div>
+                <div class="port-fallback-body" v-if="portFallback.resyncedClients && portFallback.resyncedClients.length">
+                    {{ t('port_fallback_resynced', portFallback.resyncedClients.join(', ')) }}
+                </div>
+                <div class="port-fallback-body" v-else>{{ t('port_fallback_no_clients') }}</div>
+                <button class="btn btn-small" @click="dismissPortFallback">{{ t('port_fallback_dismiss') }}</button>
+            </div>
+            <div class="settings-grid">
+                <div class="setting-item">
+                    <ui-prop><ui-label slot="label">{{ t('port_label') }}</ui-label><ui-num-input slot="content" v-model="settings.port" :min="1024" :max="65535" :step="1"></ui-num-input></ui-prop>
+                </div>
+                <div class="setting-item">
+                    <ui-prop><ui-label slot="label">{{ t('auto_start_label') }}</ui-label><ui-checkbox slot="content" :value="settings.autoStart" @confirm="(e) => { settings.autoStart = e.target.value; }"></ui-checkbox></ui-prop>
+                </div>
+                <div class="setting-item">
+                    <ui-prop><ui-label slot="label">{{ t('debug_log_label') }}</ui-label><ui-checkbox slot="content" :value="settings.debugLog" @confirm="(e) => { settings.debugLog = e.target.value; }"></ui-checkbox></ui-prop>
+                </div>
+                <div class="setting-item">
+                    <ui-prop><ui-label slot="label">{{ t('max_connections_label') }}</ui-label><ui-num-input slot="content" v-model="settings.maxConnections" :min="1" :max="100" :step="1"></ui-num-input></ui-prop>
+                </div>
+            </div>
+            <div class="settings-footer">
+                <ui-button @click="saveSettings" :disabled="!settingsChanged">{{ t('save_settings') }}</ui-button>
+            </div>
+        </section>
+    </div>
+
+    <!-- ====== 工具管理 ====== -->
+    <div class="tab-content" v-show="activeTab === 'tools'">
+
+        <!-- 统计栏 -->
+        <div class="tools-stats-bar">
+            <div class="stat-item total">
+                <span class="stat-num">{{ totalTools }}</span>
+                <span class="stat-desc">{{ t('total_tools') }}</span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item enabled">
+                <span class="stat-num">{{ enabledTools }}</span>
+                <span class="stat-desc">{{ t('enabled_tools') }}</span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item disabled">
+                <span class="stat-num">{{ disabledTools }}</span>
+                <span class="stat-desc">{{ t('disabled_tools') }}</span>
+            </div>
+            <div class="stats-actions">
+                <ui-button @click="selectAllTools" class="small">{{ t('select_all') }}</ui-button>
+                <ui-button @click="deselectAllTools" class="small">{{ t('deselect_all') }}</ui-button>
+                <ui-button @click="saveChanges" class="small primary">{{ t('save_changes') }}</ui-button>
+            </div>
+        </div>
+
+        <!-- 工具网格 -->
+        <div class="tools-container">
+            <div v-for="category in toolCategories" :key="category" class="tool-category">
+                <div class="category-header">
+                    <h5>{{ getCategoryDisplayName(category) }}</h5>
+                    <span class="cat-count">{{ getToolsByCategory(category).length }}</span>
+                </div>
+                <div class="category-controls">
+                    <ui-button @click="toggleCategoryTools(category, true)" class="small">{{ t('select_all') }}</ui-button>
+                    <ui-button @click="toggleCategoryTools(category, false)" class="small">{{ t('deselect_all') }}</ui-button>
+                </div>
+                <div class="tool-items">
+                    <div v-for="tool in getToolsByCategory(category)" :key="tool.name" class="tool-item">
+                        <ui-checkbox
+                            :value="tool.enabled"
+                            @change="(event) => updateToolStatus(category, tool.name, event.target.checked)"
+                        ></ui-checkbox>
+                        <div class="tool-info">
+                            <div class="tool-name">{{ tool.name }}</div>
+                            <div class="tool-description">{{ tool.description }}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 提示词模板库 -->
+        <div class="prompts-reference">
+            <div class="ref-title">{{ t('prompts_title') }}</div>
+            <div class="ref-subtitle">{{ t('prompts_desc') }}</div>
+            <div class="prompt-quick-grid">
+                <details class="prompt-quick-card">
+                    <summary class="prompt-summary"><span class="prompt-quick-icon">🎬</span><span class="prompt-quick-name">Scene Building</span></summary>
+                    <div class="prompt-body">
+                        <div class="prompt-item">
+                            <div class="prompt-item-title">Create a Complete 2D Game Scene</div>
+                            <pre class="prompt-text">Create a new 2D game scene in Cocos Creator with:
+1. Canvas node with solid color background (#1a1a2e)
+2. Player sprite at position (0, -200) named "Player"
+3. Ground platform at position (0, -400)
+4. UI layer: Score label (top-right), Health bar (top-left), Pause button
+5. Camera set to follow the player</pre>
+                            <button class="ecr-copy-btn prompt-copy" title="复制" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">📋</button>
+                        </div>
+                        <div class="prompt-item">
+                            <div class="prompt-item-title">Build a Main Menu Scene</div>
+                            <pre class="prompt-text">Create a main menu scene with:
+1. Background image
+2. Title "GAME TITLE" centered at top (font-size: 48, bold)
+3. Three buttons: "Start Game", "Settings", "Exit"
+4. Version text at bottom-right (small, gray)
+5. Smooth fade-in animation on scene load (0.5s)</pre>
+                            <button class="ecr-copy-btn prompt-copy" title="复制" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">📋</button>
+                        </div>
+                    </div>
+                </details>
+                <details class="prompt-quick-card">
+                    <summary class="prompt-summary"><span class="prompt-quick-icon">🖼️</span><span class="prompt-quick-name">UI Building</span></summary>
+                    <div class="prompt-body">
+                        <div class="prompt-item">
+                            <div class="prompt-item-title">Create an Inventory Panel</div>
+                            <pre class="prompt-text">Build an inventory UI panel:
+1. Semi-transparent dark background, rounded corners
+2. Grid layout with 4x5 inventory slots (64x64 each)
+3. Drag-and-drop support between slots
+4. "Inventory" title + close button
+5. Item count badge on each slot
+6. Scale-up opening animation (0.3s)</pre>
+                            <button class="ecr-copy-btn prompt-copy" title="复制" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">📋</button>
+                        </div>
+                        <div class="prompt-item">
+                            <div class="prompt-item-title">Game HUD / Heads-Up Display</div>
+                            <pre class="prompt-text">Create a complete game HUD:
+1. Health bar (red fill, white border) + numeric display (top-left)
+2. Mana/Energy bar (blue fill) below health
+3. Score display (top-right)
+4. Level/Stage indicator
+5. Ability cooldown icons (3-4 buttons, bottom-center)
+6. Virtual joystick (bottom-left, if mobile)</pre>
+                            <button class="ecr-copy-btn prompt-copy" title="复制" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">📋</button>
+                        </div>
+                    </div>
+                </details>
+                <details class="prompt-quick-card">
+                    <summary class="prompt-summary"><span class="prompt-quick-icon">✨</span><span class="prompt-quick-name">Animation & FX</span></summary>
+                    <div class="prompt-body">
+                        <div class="prompt-item">
+                            <div class="prompt-item-title">Character Idle Animation</div>
+                            <pre class="prompt-text">Create a character idle animation:
+1. Add Animation component to character node
+2. Create "idle" animation clip (looping)
+3. Breathing scale: 0.95 to 1.05, 2s cycle, ease in-out
+4. Vertical bob: up 2px, 2s cycle
+5. Blink effect on "eyes" child node (every 3-5s)
+6. Set animation to play on load</pre>
+                            <button class="ecr-copy-btn prompt-copy" title="复制" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">📋</button>
+                        </div>
+                        <div class="prompt-item">
+                            <div class="prompt-item-title">Particle Effects Collection</div>
+                            <pre class="prompt-text">Create particle effect presets:
+1. Explosion: orange/red burst, expanding outward, 0.5s lifetime
+2. Coin collect: yellow particles burst upward in arc
+3. Level up: golden particles spiral upward
+4. Damage flash: character flashes red (0.1s)
+5. Teleport: blue particles converge inward then outward
+6. Trail effect: particles follow moving object</pre>
+                            <button class="ecr-copy-btn prompt-copy" title="复制" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">📋</button>
+                        </div>
+                    </div>
+                </details>
+                <details class="prompt-quick-card">
+                    <summary class="prompt-summary"><span class="prompt-quick-icon">🔧</span><span class="prompt-quick-name">Components</span></summary>
+                    <div class="prompt-body">
+                        <div class="prompt-item">
+                            <div class="prompt-item-title">2D Physics Setup</div>
+                            <pre class="prompt-text">Set up 2D physics for a platformer:
+1. Enable 2D physics in project settings
+2. Add RigidBody2D to player (Dynamic, fixed rotation)
+3. Add BoxCollider2D to player (match sprite size)
+4. Add RigidBody2D (Static) + BoxCollider2D to ground/platforms
+5. Set gravity to (0, -980)
+6. Configure collision matrix for player-vs-enemy and player-vs-collectible</pre>
+                            <button class="ecr-copy-btn prompt-copy" title="复制" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">📋</button>
+                        </div>
+                        <div class="prompt-item">
+                            <div class="prompt-item-title">Interactive Button with States</div>
+                            <pre class="prompt-text">Create an interactive button with full state management:
+1. Add Button component to the node
+2. Normal state (default sprite)
+3. Hover state (brighter sprite, scale 1.05)
+4. Pressed state (darker sprite, scale 0.95)
+5. Disabled state (grayed out)
+6. Add click sound effect
+7. Transition component for smooth state switching
+8. Wire onClick event to the appropriate action</pre>
+                            <button class="ecr-copy-btn prompt-copy" title="复制" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">📋</button>
+                        </div>
+                    </div>
+                </details>
+                <details class="prompt-quick-card">
+                    <summary class="prompt-summary"><span class="prompt-quick-icon">📦</span><span class="prompt-quick-name">Prefabs</span></summary>
+                    <div class="prompt-body">
+                        <div class="prompt-item">
+                            <div class="prompt-item-title">Create a Character Prefab</div>
+                            <pre class="prompt-text">Create a reusable character prefab:
+1. Root "Character" with: Sprite, RigidBody2D, BoxCollider2D, Animation
+2. Child "HealthBar" (floating health bar)
+3. Child "WeaponSlot" (empty mount point)
+4. Child "Effects" (hit sparks etc.)
+5. Expose properties: moveSpeed, jumpForce, maxHealth
+6. Add Character script with basic movement logic</pre>
+                            <button class="ecr-copy-btn prompt-copy" title="复制" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">📋</button>
+                        </div>
+                        <div class="prompt-item">
+                            <div class="prompt-item-title">Projectile / Bullet Prefab</div>
+                            <pre class="prompt-text">Create a projectile prefab with:
+1. Sprite component for visual
+2. RigidBody2D (Kinematic) for movement
+3. Collider that triggers on contact
+4. Auto-destroy after 3s or on collision
+5. Trail particle effect
+6. Configurable: speed, damage, direction
+7. Impact effect prefab reference (spawned on hit)</pre>
+                            <button class="ecr-copy-btn prompt-copy" title="复制" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">📋</button>
+                        </div>
+                    </div>
+                </details>
+                <details class="prompt-quick-card">
+                    <summary class="prompt-summary"><span class="prompt-quick-icon">🐛</span><span class="prompt-quick-name">Debug</span></summary>
+                    <div class="prompt-body">
+                        <div class="prompt-item">
+                            <div class="prompt-item-title">Full Scene Audit</div>
+                            <pre class="prompt-text">Perform a full audit of the current scene:
+1. List all nodes with hierarchy depth
+2. Count nodes per type (Sprite, Button, Label, etc.)
+3. Identify nodes without any component
+4. Find nodes with missing sprite frames or materials
+5. Check for textures larger than 2048px
+6. Report nodes with high draw calls
+7. List all active scripts and their update frequency
+8. Identify unused assets
+9. Report total vertex count and draw calls
+10. Suggest optimization opportunities</pre>
+                            <button class="ecr-copy-btn prompt-copy" title="复制" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">📋</button>
+                        </div>
+                        <div class="prompt-item">
+                            <div class="prompt-item-title">Fix Common Scene Issues</div>
+                            <pre class="prompt-text">Scan and fix common issues in the current scene:
+1. Find nodes at (0,0,0) that should be elsewhere
+2. Identify overlapping UI elements
+3. Find nodes with scale (0,0,0) or very large scale
+4. Components with missing references (null sprite frames)
+5. Verify all button onClick targets are valid
+6. Animation clips referencing deleted nodes
+7. Prefab instances with broken prefab links</pre>
+                            <button class="ecr-copy-btn prompt-copy" title="复制" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">📋</button>
+                        </div>
+                    </div>
+                </details>
+                <details class="prompt-quick-card">
+                    <summary class="prompt-summary"><span class="prompt-quick-icon">🗂️</span><span class="prompt-quick-name">Assets</span></summary>
+                    <div class="prompt-body">
+                        <div class="prompt-item">
+                            <div class="prompt-item-title">Organize Project Assets</div>
+                            <pre class="prompt-text">Help me organize my project assets:
+1. List all assets grouped by type
+2. Suggest folder structure: textures/, audio/, prefabs/, animations/, scripts/, scenes/, materials/, fonts/
+3. Move mislocated assets to appropriate folders
+4. Update all references after moving
+5. Remove duplicate or unused assets</pre>
+                            <button class="ecr-copy-btn prompt-copy" title="复制" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">📋</button>
+                        </div>
+                    </div>
+                </details>
+                <details class="prompt-quick-card">
+                    <summary class="prompt-summary"><span class="prompt-quick-icon">⚡</span><span class="prompt-quick-name">Workflows</span></summary>
+                    <div class="prompt-body">
+                        <div class="prompt-item">
+                            <div class="prompt-item-title">Batch Rename Nodes</div>
+                            <pre class="prompt-text">Batch rename nodes in the current scene:
+1. Find all nodes matching a pattern [specify]
+2. Rename with convention like "Enemy_01", "Enemy_02"
+3. Update script references to renamed nodes
+4. Report changes made</pre>
+                            <button class="ecr-copy-btn prompt-copy" title="复制" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">📋</button>
+                        </div>
+                        <div class="prompt-item">
+                            <div class="prompt-item-title">Batch Add/Modify Components</div>
+                            <pre class="prompt-text">Batch operation on multiple nodes:
+1. Find all nodes of type [specify]
+2. Add component [specify] to each
+3. Set property [name] to [value] on all
+4. Verify the changes
+5. Report any failed or skipped nodes</pre>
+                            <button class="ecr-copy-btn prompt-copy" title="复制" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">📋</button>
+                        </div>
+                    </div>
+                </details>
+            </div>
+        </div>
+    </div>
+
+    <!-- ====== 配置 ====== -->
+    <div class="tab-content" v-show="activeTab === 'config'">
+
+        <!-- 服务器信息 -->
+        <section class="cfg-server-info">
+            <h3>{{ t('server_info') }}</h3>
+            <div class="settings-grid">
+                <div class="setting-item">
+                    <ui-prop><ui-label slot="label">{{ t('server_name_label') }}</ui-label><ui-input slot="content" v-model="configServerName" placeholder="cocos-creator"></ui-input></ui-prop>
+                </div>
+                <div class="setting-item">
+                    <ui-prop><ui-label slot="label">{{ t('server_address') }}</ui-label><ui-input slot="content" :value="configServerUrl" readonly></ui-input></ui-prop>
+                </div>
+                <div class="setting-item">
+                    <ui-prop><ui-label slot="label">{{ t('timeout_ms') }}</ui-label><ui-num-input slot="content" v-model="configTimeout" :min="5000" :max="60000" :step="1000"></ui-num-input></ui-prop>
+                </div>
+            </div>
+        </section>
+
+        <!-- 编辑器配置 -->
+        <section class="cfg-editors-section">
+            <h3>编辑器配置 <span style="font-weight:400;font-size:11px;color:var(--text3)">💾 一键下载到项目根目录</span></h3>
+            <div class="editor-accordion">
+                <details class="editor-detail">
+                    <summary class="editor-summary"><span>VS Code</span><span class="editor-summary-hint">↳ .vscode/mcp.json</span></summary>
+                    <div class="editor-detail-body"><div class="ecr-row"><pre class="ecr-config">{
+  "servers": {
+    "cocos-creator": {
+      "type": "http",
+      "url": "http://127.0.0.1:3000/mcp"
+    }
+  }
+}</pre><button class="ecr-copy-btn" title="复制" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('pre').textContent)">📋</button><button class="ecr-dl-btn" title="一键下载到项目根目录" onclick="var a=document.createElement('a');a.href='data:text/plain,'+encodeURIComponent(this.parentElement.querySelector('pre').textContent);a.download='mcp.json';a.click()">💾 一键配置</button></div></div>
+                </details>
+                <details class="editor-detail">
+                    <summary class="editor-summary"><span>Cursor</span><span class="editor-summary-hint">↳ .cursor/mcp.json</span></summary>
+                    <div class="editor-detail-body"><div class="ecr-row"><pre class="ecr-config">{
+  "mcpServers": {
+    "cocos-creator": {
+      "url": "http://127.0.0.1:3000/mcp"
+    }
+  }
+}</pre><button class="ecr-copy-btn" title="复制" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('pre').textContent)">📋</button><button class="ecr-dl-btn" title="一键下载到项目根目录" onclick="var a=document.createElement('a');a.href='data:text/plain,'+encodeURIComponent(this.parentElement.querySelector('pre').textContent);a.download='mcp.json';a.click()">💾 一键配置</button></div></div>
+                </details>
+                <details class="editor-detail">
+                    <summary class="editor-summary"><span>Windsurf</span><span class="editor-summary-hint">↳ .windsurf/mcp.json</span></summary>
+                    <div class="editor-detail-body"><div class="ecr-row"><pre class="ecr-config">{
+  "mcpServers": {
+    "cocos-creator": {
+      "url": "http://127.0.0.1:3000/mcp"
+    }
+  }
+}</pre><button class="ecr-copy-btn" title="复制" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('pre').textContent)">📋</button><button class="ecr-dl-btn" title="一键下载到项目根目录" onclick="var a=document.createElement('a');a.href='data:text/plain,'+encodeURIComponent(this.parentElement.querySelector('pre').textContent);a.download='mcp.json';a.click()">💾 一键配置</button></div></div>
+                </details>
+                <details class="editor-detail">
+                    <summary class="editor-summary"><span>Claude Code</span><span class="editor-summary-hint">↳ .mcp.json</span></summary>
+                    <div class="editor-detail-body"><div class="ecr-row"><pre class="ecr-config">{
+  "mcpServers": {
+    "cocos-creator": {
+      "type": "http",
+      "url": "http://127.0.0.1:3000/mcp"
+    }
+  }
+}</pre><button class="ecr-copy-btn" title="复制" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('pre').textContent)">📋</button><button class="ecr-dl-btn" title="一键下载到项目根目录" onclick="var a=document.createElement('a');a.href='data:text/plain,'+encodeURIComponent(this.parentElement.querySelector('pre').textContent);a.download='.mcp.json';a.click()">💾 一键配置</button></div></div>
+                </details>
+                <details class="editor-detail">
+                    <summary class="editor-summary"><span>Codex CLI</span><span class="editor-summary-hint">↳ .mcp.json</span></summary>
+                    <div class="editor-detail-body"><div class="ecr-row"><pre class="ecr-config">{
+  "mcpServers": {
+    "cocos-creator": {
+      "type": "http",
+      "url": "http://127.0.0.1:3000/mcp"
+    }
+  }
+}</pre><button class="ecr-copy-btn" title="复制" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('pre').textContent)">📋</button><button class="ecr-dl-btn" title="一键下载到项目根目录" onclick="var a=document.createElement('a');a.href='data:text/plain,'+encodeURIComponent(this.parentElement.querySelector('pre').textContent);a.download='.mcp.json';a.click()">💾 一键配置</button></div></div>
+                </details>
+                <details class="editor-detail">
+                    <summary class="editor-summary"><span>Claude Desktop</span><span class="editor-summary-hint">↳ claude_desktop_config.json</span></summary>
+                    <div class="editor-detail-body"><div class="ecr-row"><pre class="ecr-config">{
+  "mcpServers": {
+    "cocos-creator": {
+      "type": "http",
+      "url": "http://127.0.0.1:3000/mcp"
+    }
+  }
+}</pre><button class="ecr-copy-btn" title="复制" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('pre').textContent)">📋</button><button class="ecr-dl-btn" title="一键下载到项目根目录" onclick="var a=document.createElement('a');a.href='data:text/plain,'+encodeURIComponent(this.parentElement.querySelector('pre').textContent);a.download='claude_desktop_config.json';a.click()">💾 一键配置</button></div></div>
+                </details>
+                <details class="editor-detail">
+                    <summary class="editor-summary"><span>Gemini CLI</span><span class="editor-summary-hint">↳ .gemini/mcp.json</span></summary>
+                    <div class="editor-detail-body"><div class="ecr-row"><pre class="ecr-config">{
+  "mcpServers": {
+    "cocos-creator": {
+      "type": "http",
+      "url": "http://127.0.0.1:3000/mcp"
+    }
+  }
+}</pre><button class="ecr-copy-btn" title="复制" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('pre').textContent)">📋</button><button class="ecr-dl-btn" title="一键下载到项目根目录" onclick="var a=document.createElement('a');a.href='data:text/plain,'+encodeURIComponent(this.parentElement.querySelector('pre').textContent);a.download='mcp.json';a.click()">💾 一键配置</button></div></div>
+                </details>
+                <details class="editor-detail">
+                    <summary class="editor-summary"><span>Trae / Trae CN</span><span class="editor-summary-hint">↳ .trae/mcp.json</span></summary>
+                    <div class="editor-detail-body"><div class="ecr-row"><pre class="ecr-config">{
+  "mcpServers": {
+    "cocos-creator": {
+      "url": "http://127.0.0.1:3000/mcp"
+    }
+  }
+}</pre><button class="ecr-copy-btn" title="复制" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('pre').textContent)">📋</button><button class="ecr-dl-btn" title="一键下载到项目根目录" onclick="var a=document.createElement('a');a.href='data:text/plain,'+encodeURIComponent(this.parentElement.querySelector('pre').textContent);a.download='mcp.json';a.click()">💾 一键配置</button></div></div>
+                </details>
+                <details class="editor-detail">
+                    <summary class="editor-summary"><span>Zed</span><span class="editor-summary-hint">↳ settings.json (Zed)</span></summary>
+                    <div class="editor-detail-body"><div class="ecr-row"><pre class="ecr-config">{
+  "mcp_servers": {
+    "cocos-creator": {
+      "type": "http",
+      "url": "http://127.0.0.1:3000/mcp"
+    }
+  }
+}</pre><button class="ecr-copy-btn" title="复制" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('pre').textContent)">📋</button><button class="ecr-dl-btn" title="一键下载到项目根目录" onclick="var a=document.createElement('a');a.href='data:text/plain,'+encodeURIComponent(this.parentElement.querySelector('pre').textContent);a.download='settings.json';a.click()">💾 一键配置</button></div></div>
+                </details>
+                <details class="editor-detail">
+                    <summary class="editor-summary"><span>JetBrains AI</span><span class="editor-summary-hint">↳ mcp.json</span></summary>
+                    <div class="editor-detail-body"><div class="ecr-row"><pre class="ecr-config">{
+  "mcpServers": {
+    "cocos-creator": {
+      "type": "http",
+      "url": "http://127.0.0.1:3000/mcp"
+    }
+  }
+}</pre><button class="ecr-copy-btn" title="复制" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('pre').textContent)">📋</button><button class="ecr-dl-btn" title="一键下载到项目根目录" onclick="var a=document.createElement('a');a.href='data:text/plain,'+encodeURIComponent(this.parentElement.querySelector('pre').textContent);a.download='mcp.json';a.click()">💾 一键配置</button></div></div>
+                </details>
+                <details class="editor-detail">
+                    <summary class="editor-summary"><span>Aider</span><span class="editor-summary-hint">↳ .aider.conf.yml</span></summary>
+                    <div class="editor-detail-body"><div class="ecr-row"><pre class="ecr-config">mcp_servers:
+  cocos-creator:
+    url: http://127.0.0.1:3000/mcp
+    type: http</pre><button class="ecr-copy-btn" title="复制" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('pre').textContent)">📋</button><button class="ecr-dl-btn" title="一键下载到项目根目录" onclick="var a=document.createElement('a');a.href='data:text/plain,'+encodeURIComponent(this.parentElement.querySelector('pre').textContent);a.download='.aider.conf.yml';a.click()">💾 一键配置</button></div></div>
+                </details>
+                <details class="editor-detail">
+                    <summary class="editor-summary"><span>Goose</span><span class="editor-summary-hint">↳ config.json (Goose)</span></summary>
+                    <div class="editor-detail-body"><div class="ecr-row"><pre class="ecr-config">{
+  "mcp_servers": {
+    "cocos-creator": {
+      "type": "http",
+      "url": "http://127.0.0.1:3000/mcp"
+    }
+  }
+}</pre><button class="ecr-copy-btn" title="复制" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('pre').textContent)">📋</button><button class="ecr-dl-btn" title="一键下载到项目根目录" onclick="var a=document.createElement('a');a.href='data:text/plain,'+encodeURIComponent(this.parentElement.querySelector('pre').textContent);a.download='config.json';a.click()">💾 一键配置</button></div></div>
+                </details>
+            </div>
+        </section>
+
+        <!-- 日志 -->
+        <section class="cfg-log-section">
+            <h3>{{ t('operation_log') }}</h3>
+            <div class="log-container">
+                <div v-for="(log, index) in configLogs" :key="index" class="log-item" :class="log.type">
+                    <span class="log-time">{{ log.time }}</span>
+                    <span class="log-message">{{ log.message }}</span>
+                </div>
+                <div v-if="configLogs.length === 0" class="log-empty">{{ t('no_logs') }}</div>
+            </div>
+        </section>
+    </div>
+
+    
+
+</div>

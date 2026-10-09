@@ -1,0 +1,13 @@
+{
+  "general": {
+    "highQuality": true,
+    "renderPipeline": "22a135d0-b2ef-4c1b-86d2-5bbbd88e4875"
+  },
+  "__version__": "1.0.6",
+  "fbx": {
+    "legacyFbxImporter": {
+      "visible": true
+    }
+  },
+  "custom_joint_texture_layouts": []
+}
