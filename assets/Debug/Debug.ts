@@ -80,6 +80,8 @@ export class Debug extends Component {
         };
         makeLight('KeyLight', 50, 30, 0, 60000);
         makeLight('FillLight', -30, -120, 0, 25000);
+        // 顶灯：从正上方垂直往下照，突出模型顶部
+        makeLight('TopLight', 90, 0, 0, 40000);
     }
 
     /** 模型预览根节点：放在画面右侧，位于 UI 平面之后避免深度冲突 */
