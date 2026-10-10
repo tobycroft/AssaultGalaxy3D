@@ -7,6 +7,7 @@ import {
     Prefab,
     instantiate,
     Vec3,
+    Vec4,
     Quat,
     Color,
     UITransform,
@@ -26,6 +27,14 @@ const MODEL_LAYER = 1;
 
 // 预览时模型统一缩放到的大致尺寸（世界单位）
 const TARGET_MODEL_SIZE = 380;
+
+// 模型分类展示名（key 为 resources/Model 下的一级目录名）
+const CATEGORY_NAMES: Record<string, string> = {
+    spaceship: '宇宙飞船',
+    spacestation: '空间站',
+    spaceport: '太空港',
+    asteroid: '小行星',
+};
 
 @ccclass('Debug')
 export class Debug extends Component {
@@ -63,24 +72,34 @@ export class Debug extends Component {
             const g = back.getComponent(Graphics) ?? back.addComponent(Graphics);
             this.drawButtonBg(g, 200, 56, new Color(45, 74, 122, 255));
         }
+
+        // 列表已按分类展示（各类自带标题），旧的固定标题改为通用文案
+        const caption = canvas.getChildByName('ListCaption')?.getComponent(Label);
+        if (caption) caption.string = '模型列表';
     }
 
-    /** 添加方向光，保证 3D 模型被正确照亮 */
+    /**
+     * 添加主平行光并提升环境光，保证 3D 模型被正确照亮。
+     * 注意：前向管线每帧只支持 1 盏灯（LIGHTS_PER_PASS = 1），
+     * 加多盏平行光/点光不会生效，只有最后添加的平行光作为主光源。
+     */
     private addLights(): void {
         const root = this.node.parent;
         if (!root) return;
-        const makeLight = (name: string, ex: number, ey: number, ez: number, ill: number): void => {
-            const n = new Node(name);
-            const dl = n.addComponent(DirectionalLight);
-            dl.illuminance = ill;
-            dl.color = new Color(255, 255, 255, 255);
-            n.setRotationFromEuler(ex, ey, ez);
-            root.addChild(n);
-        };
-        makeLight('KeyLight', 50, 30, 0, 60000);
-        makeLight('FillLight', -30, -120, 0, 25000);
-        // 顶灯：从正上方垂直往下照，突出模型顶部
-        makeLight('TopLight', 90, 0, 0, 40000);
+
+        // 顶部主光：方向光沿节点 -Z 轴照射，欧拉角 X 必须取负值光才朝下照；
+        // -50° 前倾让模型顶部和朝向相机的一面同时被照亮
+        const n = new Node('TopLight');
+        const dl = n.addComponent(DirectionalLight);
+        dl.illuminance = 100000;
+        dl.color = new Color(255, 255, 255, 255);
+        n.setRotationFromEuler(-50, -25, 0);
+        root.addChild(n);
+
+        // 场景环境光：整体补光，每帧从 pipelineSceneData.ambient 读取，运行时修改即时生效
+        const ambient = director.root.pipeline.pipelineSceneData.ambient;
+        ambient.skyIllum = 60000;
+        ambient.groundAlbedo = new Vec4(0.35, 0.35, 0.35, 1);
     }
 
     /** 模型预览根节点：放在画面右侧，位于 UI 平面之后避免深度冲突 */
@@ -93,8 +112,7 @@ export class Debug extends Component {
 
     /**
      * 统一的模型列表：自动列举 resources/Model 下所有模型，
-     * 全部加载完成后按路径排序一次性生成按钮（统一样式、统一位置）。
-     * 按钮标签取模型文件名（如 default_spaceship / station1_tiangong）。
+     * 全部加载完成后按一级目录分类、生成带分类标题的按钮列表。
      */
     private loadModels(): void {
         const infos = resources.getDirWithPath('Model', Prefab);
@@ -104,39 +122,83 @@ export class Debug extends Component {
         }
         infos.sort((a, b) => a.path.localeCompare(b.path));
 
-        const prefabs: (Prefab | null)[] = new Array(infos.length).fill(null);
+        const loaded: { path: string; prefab: Prefab }[] = [];
         let pending = infos.length;
-        infos.forEach((info, i) => {
+        infos.forEach((info) => {
             resources.load(info.path, Prefab, (err, prefab) => {
-                prefabs[i] = err ? null : prefab;
+                if (!err && prefab) loaded.push({ path: info.path, prefab });
                 pending--;
                 if (pending > 0) return;
-                const list = prefabs.filter((p): p is Prefab => !!p);
-                if (list.length === 0) {
+                if (loaded.length === 0) {
                     this.setStatus('模型加载失败');
                     return;
                 }
-                this.showModelButtons(infos, list);
-                this.setStatus('共找到 ' + list.length + ' 个模型，点击左侧按钮预览');
+                this.showModelButtons(loaded);
+                this.setStatus('共找到 ' + loaded.length + ' 个模型，点击左侧按钮预览');
             });
         });
     }
 
     /**
-     * 在固定的 ModelButtons 容器内，为每个模型生成统一样式的按钮。
-     * 容器本身可在编辑器里拖动，从而整体移动模型列表。
+     * 在 ModelButtons 容器内按分类分列展示：每个分类占一列（标题在上，按钮竖排），
+     * 各列沿画布宽度平均分布、顶部对齐。容器本身可在编辑器里拖动整体移动。
      */
-    private showModelButtons(infos: { path: string }[], prefabs: Prefab[]): void {
+    private showModelButtons(items: { path: string; prefab: Prefab }[]): void {
         const parent = this.modelButtonContainer ?? this.node;
-        const startY = 150;
-        const gap = 74;
-        prefabs.forEach((prefab, i) => {
-            const y = startY - i * gap;
-            const label = infos[i].path.split('/').pop() || 'model_' + i;
-            this.createButton(parent, 'Btn_' + label, label, -400, y, 300, 60, () => {
-                this.displayModel(prefab);
-            });
+
+        const groups = new Map<string, { path: string; prefab: Prefab }[]>();
+        for (const item of items) {
+            const category = item.path.split('/')[1] || 'other';
+            const list = groups.get(category) ?? [];
+            list.push(item);
+            groups.set(category, list);
+        }
+
+        const order = Object.keys(CATEGORY_NAMES);
+        const categories = [...groups.keys()].sort((a, b) => {
+            const ia = order.indexOf(a);
+            const ib = order.indexOf(b);
+            return (ia < 0 ? order.length : ia) - (ib < 0 ? order.length : ib) || a.localeCompare(b);
         });
+
+        // 列布局：均分画布宽度，列宽 = 画布宽 / 列数，按钮留出列间距
+        const canvasW = this.node.getComponent(UITransform)!.width;
+        const topY = 200;
+        const CAPTION_H = 36;
+        const CAPTION_MARGIN = 10;
+        const BTN_H = 56;
+        const BTN_MARGIN = 6;
+        const colW = canvasW / categories.length;
+        const btnW = colW - 40;
+
+        categories.forEach((category, i) => {
+            const x = -canvasW / 2 + colW * (i + 0.5);
+            this.createCategoryLabel(parent, category, x, topY - CAPTION_H / 2);
+            let cursor = topY - CAPTION_H - CAPTION_MARGIN;
+            for (const item of groups.get(category)!) {
+                const label = item.path.split('/').pop() || 'model';
+                this.createButton(parent, 'Btn_' + label, label, x, cursor - BTN_H / 2, btnW, BTN_H, () => {
+                    this.displayModel(item.prefab);
+                });
+                cursor -= BTN_H + BTN_MARGIN;
+            }
+        });
+    }
+
+    /** 生成分类标题（如"宇宙飞船"） */
+    private createCategoryLabel(parent: Node, category: string, x: number, y: number): void {
+        const n = new Node('Caption_' + category);
+        n.layer = UI_LAYER;
+        n.setPosition(x, y, 0);
+        const ut = n.addComponent(UITransform);
+        ut.setContentSize(300, 36);
+        const l = n.addComponent(Label);
+        l.string = CATEGORY_NAMES[category] ?? category;
+        l.fontSize = 28;
+        l.color = new Color(120, 200, 255, 255);
+        l.horizontalAlign = Label.HorizontalAlign.CENTER;
+        l.verticalAlign = Label.VerticalAlign.CENTER;
+        parent.addChild(n);
     }
 
     /** 运行时动态生成单个模型按钮（挂在固定的 ModelButtons 容器内） */
@@ -165,7 +227,7 @@ export class Debug extends Component {
         lut.setContentSize(w, h);
         const l = lab.addComponent(Label);
         l.string = label;
-        l.fontSize = 26;
+        l.fontSize = 22;
         l.color = new Color(255, 255, 255, 255);
         l.horizontalAlign = Label.HorizontalAlign.CENTER;
         l.verticalAlign = Label.VerticalAlign.CENTER;
@@ -252,7 +314,10 @@ export class Debug extends Component {
         const maxDim = Math.max(sizeX, sizeY, sizeZ) || 1;
         const scale = TARGET_MODEL_SIZE / maxDim;
 
+        // 包围盒中心是世界坐标，必须先换算回 ModelRoot 的本地空间再取反定位，
+        // 否则 ModelRoot 不在世界原点时（实际在 960,360,-50），模型会被推出相机视野。
+        const localCenter = this.modelRoot!.inverseTransformPoint(new Vec3(), center);
         model.setScale(scale, scale, scale);
-        model.setPosition(-center.x * scale, -center.y * scale, -center.z * scale);
+        model.setPosition(-localCenter.x * scale, -localCenter.y * scale, -localCenter.z * scale);
     }
 }
