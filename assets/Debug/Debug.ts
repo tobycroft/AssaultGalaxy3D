@@ -15,9 +15,8 @@ import {
     geometry,
     MeshRenderer,
     DirectionalLight,
-    tween,
+    EventType,
 } from 'cc';
-import { fadeIn, fadeOutThen, pressEffect } from '../Common/UIAnim';
 
 const { ccclass } = _decorator;
 
@@ -34,17 +33,36 @@ export class Debug extends Component {
     private modelRoot: Node | null = null;
     private currentModel: Node | null = null;
     private statusLabel: Label | null = null;
+    private modelButtonContainer: Node | null = null;
     private spin = true;
 
     onLoad(): void {
         this.addLights();
-        this.buildStaticUI();
+        this.bindSceneUI();
         this.setupModelRoot();
+        this.loadModels();
     }
 
     update(dt: number): void {
         if (this.spin && this.currentModel) {
             this.currentModel.rotate(Quat.fromAxisAngle(new Quat(), Vec3.UP, dt * 0.6));
+        }
+    }
+
+    /**
+     * 绑定场景中已固定摆放的 UI 节点（标题 / 状态 / 返回按钮 / 模型列表容器）。
+     * 这些节点在编辑器里可直接拖动调整位置；返回按钮的点击事件已在场景中绑定到 onBack。
+     */
+    private bindSceneUI(): void {
+        const canvas = this.node;
+        this.statusLabel = canvas.getChildByName('StatusLabel')?.getComponent(Label) ?? null;
+        this.modelButtonContainer = canvas.getChildByName('ModelButtons') ?? null;
+
+        // 给返回按钮补一个可见的圆角背景（节点本身在场景中固定，可拖动）
+        const back = canvas.getChildByName('BackButton');
+        if (back) {
+            const g = back.getComponent(Graphics) ?? back.addComponent(Graphics);
+            this.drawButtonBg(g, 200, 56, new Color(45, 74, 122, 255));
         }
     }
 
@@ -64,31 +82,6 @@ export class Debug extends Component {
         makeLight('FillLight', -30, -120, 0, 25000);
     }
 
-    /** 构建静态调试界面 UI（标题 / 状态 / 返回），并播放入场动画 */
-    private buildStaticUI(): void {
-        const root = this.node; // Canvas
-
-        const title = this.createLabel(root, 'Title', 'Debug · 模型预览', 0, 320, 40);
-        fadeIn(title.node, new Vec3(0, 40, 0), 0, 0.4);
-
-        const backBtn = this.createButton(root, 'BtnBack', '← 返回首页', -560, 320, 200, 56, () => this.onBack());
-        pressEffect(backBtn);
-        fadeIn(backBtn, new Vec3(-60, 0, 0), 0.15);
-
-        this.statusLabel = this.createLabel(root, 'Status', '请点击左侧按钮预览飞船模型', 0, 270, 26, new Color(180, 200, 230, 255));
-        fadeIn(this.statusLabel.node, new Vec3(0, -20, 0), 0.3);
-
-        // 模型列表标题
-        const caption = this.createLabel(root, 'ListCaption', '飞船模型', -400, 210, 30, new Color(120, 200, 255, 255));
-        fadeIn(caption.node, new Vec3(-40, 0, 0), 0.2);
-
-        // 编辑器中创建的模型选择按钮：依次从左侧滑入
-        const std = root.getChildByName('BtnShipStandard');
-        const hq = root.getChildByName('BtnShipHQ');
-        if (std) fadeIn(std, new Vec3(-80, 0, 0), 0.1);
-        if (hq) fadeIn(hq, new Vec3(-80, 0, 0), 0.22);
-    }
-
     /** 模型预览根节点：放在画面右侧，位于 UI 平面之后避免深度冲突 */
     private setupModelRoot(): void {
         this.modelRoot = new Node('ModelRoot');
@@ -97,60 +90,40 @@ export class Debug extends Component {
         this.node.addChild(this.modelRoot);
     }
 
-    /**
-     * 点击左侧“标准版”飞船按钮：加载并预览 default_spaceship 模型。
-     * 按钮节点已置于 Debug 场景中，点击事件通过编辑器绑定到本方法。
-     */
-    public onSelectSpaceshipStandard(): void {
-        this.loadAndShow('Model/spaceship/default_spaceship/default_spaceship', 'Spaceship · 标准版');
-    }
-
-    /** 点击左侧“高清版”飞船按钮：加载并预览 default_hq 模型 */
-    public onSelectSpaceshipHQ(): void {
-        this.loadAndShow('Model/spaceship/default_hq/default_hq', 'Spaceship · 高清版');
-    }
-
-    /** 按资源路径加载飞船 Prefab 并在右侧预览区展示 */
-    private loadAndShow(path: string, label: string): void {
-        this.setStatus('加载中: ' + label + ' …');
-        resources.load(path, Prefab, (err, prefab) => {
-            if (err || !prefab) {
-                // glb 导入后 Prefab 是其子资源，路径必须带上子资源名：
-                // Model/spaceship/default_spaceship/default_spaceship（即 glb 文件名/同名 prefab 子资源）。
-                console.error('[Debug] 加载模型失败:', label, 'path =', path, 'err =', err);
-                this.setStatus('✘ 加载失败: ' + label + '（' + ((err && err.message) || '资源不存在或类型不匹配') + '）');
+    /** 动态读取 resources/Model 下的所有模型 */
+    private loadModels(): void {
+        resources.loadDir('Model', Prefab, (err, assets) => {
+            if (err) {
+                this.setStatus('加载模型列表失败: ' + err.message);
                 return;
             }
-            this.displayModel(prefab as Prefab);
+            if (!assets || assets.length === 0) {
+                this.setStatus('未找到任何模型（请将模型放入 assets/resources/Model 目录）');
+                return;
+            }
+            this.showModelButtons(assets as Prefab[]);
+            this.setStatus('共找到 ' + assets.length + ' 个模型，点击左侧按钮预览');
         });
     }
 
-    private createLabel(
-        parent: Node,
-        name: string,
-        text: string,
-        x: number,
-        y: number,
-        fontSize: number,
-        color?: Color,
-    ): Label {
-        const n = new Node(name);
-        n.layer = UI_LAYER;
-        n.setPosition(x, y, 0);
-        const ut = n.addComponent(UITransform);
-        ut.setContentSize(800, fontSize + 12);
-        ut.setAnchorPoint(0.5, 0.5);
-        const l = n.addComponent(Label);
-        l.string = text;
-        l.fontSize = fontSize;
-        l.lineHeight = fontSize + 12;
-        l.color = color ?? new Color(255, 255, 255, 255);
-        l.horizontalAlign = Label.HorizontalAlign.CENTER;
-        l.verticalAlign = Label.VerticalAlign.CENTER;
-        parent.addChild(n);
-        return l;
+    /**
+     * 在固定的 ModelButtons 容器内，为每个模型动态生成按钮。
+     * 容器本身可在编辑器里拖动，从而整体移动模型列表。
+     */
+    private showModelButtons(prefabs: Prefab[]): void {
+        const parent = this.modelButtonContainer ?? this.node;
+        const startY = 150;
+        const gap = 74;
+        prefabs.forEach((prefab, i) => {
+            const y = startY - i * gap;
+            const label = prefab.name || 'model_' + i;
+            this.createButton(parent, 'Btn_' + label, label, -400, y, 300, 60, () => {
+                this.displayModel(prefab);
+            });
+        });
     }
 
+    /** 运行时动态生成单个模型按钮（挂在固定的 ModelButtons 容器内） */
     private createButton(
         parent: Node,
         name: string,
@@ -183,7 +156,7 @@ export class Debug extends Component {
         btn.addChild(lab);
 
         if (onClick) {
-            btn.on(Node.EventType.TOUCH_END, onClick, this);
+            btn.on(EventType.TOUCH_END, onClick, this);
         }
         parent.addChild(btn);
         return btn;
@@ -200,29 +173,21 @@ export class Debug extends Component {
         if (this.statusLabel) this.statusLabel.string = msg;
     }
 
+    /** 返回首页（已在场景中通过 Button 点击事件绑定） */
     private onBack(): void {
-        fadeOutThen(this.node, 0.2, () => director.loadScene('Home'));
+        director.loadScene('Home');
     }
 
     /** 显示选中的 3D 模型 */
     private displayModel(prefab: Prefab): void {
         this.clearModel();
         const model = instantiate(prefab);
-        // 模型使用 3D 默认层，确保被主相机渲染
-        model.layer = MODEL_LAYER;
-        model.setPosition(0, 0, 0);
-        model.setScale(1, 1, 1);
         this.modelRoot!.addChild(model);
-        model.updateWorldTransform();
         this.currentModel = model;
         this.spin = false;
         this.scheduleOnce(() => {
             this.fitModel(model);
             this.spin = true;
-            // 模型弹出动画：从 0.7 倍缩放弹回目标大小
-            const target = model.scale.clone();
-            model.setScale(target.x * 0.7, target.y * 0.7, target.z * 0.7);
-            tween(model).to(0.3, { scale: target }, { easing: 'backOut' }).start();
         }, 0);
         this.setStatus('已加载模型: ' + (prefab.name || 'unknown'));
     }
@@ -234,11 +199,7 @@ export class Debug extends Component {
         }
     }
 
-    /**
-     * 根据模型包围盒自动缩放并居中到 ModelRoot 原点。
-     * 注意：包围盒是世界坐标下的，必须先减去 ModelRoot 的世界坐标，
-     * 换算成相对于 ModelRoot 的本地中心后再设置 position，否则模型会被错误地挪到世界原点附近而脱离视野。
-     */
+    /** 根据模型包围盒自动缩放并居中到 ModelRoot 原点 */
     private fitModel(model: Node): void {
         let minX = Infinity;
         let minY = Infinity;
@@ -250,16 +211,10 @@ export class Debug extends Component {
         const aabb = new geometry.AABB();
         const renderers = model.getComponentsInChildren(MeshRenderer);
         for (const r of renderers) {
-            const m = r.model;
-            // 3.8 的渲染 Model 没有 getWorldBounds()，只有 modelBounds（局部空间）属性；
-            // worldBounds 要等渲染管线更新一帧后才有值，这里直接用节点世界矩阵把 modelBounds
-            // 变换到世界空间，结果与调用时序无关（与引擎 Model.updateTransform 的算法一致）。
-            if (!m || !m.modelBounds) continue;
-            geometry.AABB.transform(aabb, m.modelBounds, r.node.worldMatrix);
+            if (!r.model) continue;
+            r.model.getWorldBounds(aabb);
             const c = aabb.center;
             const h = aabb.halfExtents;
-            // 过滤退化的包围盒（半边长全为 0）
-            if (h.x <= 0 && h.y <= 0 && h.z <= 0) continue;
             minX = Math.min(minX, c.x - h.x);
             maxX = Math.max(maxX, c.x + h.x);
             minY = Math.min(minY, c.y - h.y);
@@ -267,25 +222,16 @@ export class Debug extends Component {
             minZ = Math.min(minZ, c.z - h.z);
             maxZ = Math.max(maxZ, c.z + h.z);
         }
-        if (!isFinite(minX) || (maxX - minX) < 1e-3) {
-            // 无网格数据：退回默认姿态，至少保证模型出现在预览区
-            model.setScale(1, 1, 1);
-            model.setPosition(0, 0, 0);
-            return;
-        }
+        if (!isFinite(minX)) return; // 无网格数据
 
-        // ModelRoot 的世界坐标与世界缩放（用于把世界包围盒换算回它的本地空间）
-        const rootW = this.modelRoot!.worldPosition;
-        const rootS = this.modelRoot!.worldScale;
-        const cx = ((minX + maxX) / 2 - rootW.x) / rootS.x;
-        const cy = ((minY + maxY) / 2 - rootW.y) / rootS.y;
-        const cz = ((minZ + maxZ) / 2 - rootW.z) / rootS.z;
-
-        const maxDim = Math.max(maxX - minX, maxY - minY, maxZ - minZ) /
-            Math.max(rootS.x, rootS.y, rootS.z) || 1;
+        const center = new Vec3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+        const sizeX = maxX - minX;
+        const sizeY = maxY - minY;
+        const sizeZ = maxZ - minZ;
+        const maxDim = Math.max(sizeX, sizeY, sizeZ) || 1;
         const scale = TARGET_MODEL_SIZE / maxDim;
 
         model.setScale(scale, scale, scale);
-        model.setPosition(-cx * scale, -cy * scale, -cz * scale);
+        model.setPosition(-center.x * scale, -center.y * scale, -center.z * scale);
     }
 }
