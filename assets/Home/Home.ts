@@ -1,18 +1,21 @@
-import { _decorator, Component, director, Node, Vec3 } from 'cc';
-import { fadeIn, fadeOutThen, popIn } from '../Common/UIAnim';
+import { _decorator, Component, director, Node, Vec3, Color, UITransform, Graphics, Label } from 'cc';
+import { fadeIn, fadeOutThen, popIn, pressEffect } from '../Common/UIAnim';
+import { MusicManager } from '../Common/MusicManager';
 
 const { ccclass } = _decorator;
 
 /**
  * 首页控制器。
- * 负责 “Debug” 调试按钮入口，以及菜单 / UI 的入场动画与切换场景过渡。
+ * 负责 “Debug” 调试按钮入口、菜单 / UI 的入场动画、切换场景过渡，以及背景音乐开关。
  */
 @ccclass('Home')
 export class Home extends Component {
     private switching = false;
 
     start(): void {
+        MusicManager.init();
         this.playEnterAnim();
+        this.createMusicToggle();
     }
 
     /** 点击 Debug 按钮：淡出后进入调试场景 */
@@ -45,5 +48,49 @@ export class Home extends Component {
         } else {
             director.loadScene(name);
         }
+    }
+
+    /** 右上角背景音乐开关按钮（样式与 Debug 界面按钮一致） */
+    private createMusicToggle(): void {
+        const canvas = this.node.parent;
+        if (!canvas) return;
+        const w = 170;
+        const h = 52;
+
+        const btn = new Node('BtnMusic');
+        btn.layer = canvas.layer;
+        btn.setPosition(540, 320, 0);
+        const ut = btn.addComponent(UITransform);
+        ut.setContentSize(w, h);
+        const g = btn.addComponent(Graphics);
+        g.fillColor = new Color(45, 74, 122, 255);
+        g.roundRect(-w / 2, -h / 2, w, h, 10);
+        g.fill();
+
+        const labNode = new Node('Label');
+        labNode.layer = canvas.layer;
+        const lut = labNode.addComponent(UITransform);
+        lut.setContentSize(w, h);
+        const l = labNode.addComponent(Label);
+        l.fontSize = 24;
+        l.horizontalAlign = Label.HorizontalAlign.CENTER;
+        l.verticalAlign = Label.VerticalAlign.CENTER;
+        btn.addChild(labNode);
+
+        const refresh = (): void => {
+            const on = MusicManager.get()?.isOn ?? true;
+            l.string = on ? '音乐：开' : '音乐：关';
+            l.color = on ? new Color(255, 255, 255, 255) : new Color(150, 150, 150, 255);
+        };
+        refresh();
+
+        btn.on(Node.EventType.TOUCH_END, () => {
+            MusicManager.get()?.toggle();
+            refresh();
+        }, this);
+        pressEffect(btn);
+
+        canvas.addChild(btn);
+        fadeIn(btn, new Vec3(0, 30, 0), 0.5);
     }
 }
