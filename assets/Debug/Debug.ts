@@ -15,7 +15,9 @@ import {
     geometry,
     MeshRenderer,
     DirectionalLight,
+    tween,
 } from 'cc';
+import { fadeIn, fadeOutThen, pressEffect } from '../Common/UIAnim';
 
 const { ccclass } = _decorator;
 
@@ -62,16 +64,29 @@ export class Debug extends Component {
         makeLight('FillLight', -30, -120, 0, 25000);
     }
 
-    /** 构建静态调试界面 UI（标题 / 状态 / 返回） */
+    /** 构建静态调试界面 UI（标题 / 状态 / 返回），并播放入场动画 */
     private buildStaticUI(): void {
         const root = this.node; // Canvas
 
-        this.createLabel(root, 'Title', 'Debug · 模型预览', 0, 320, 40);
-        this.createButton(root, 'BtnBack', '← 返回首页', -560, 320, 200, 56, () => this.onBack());
+        const title = this.createLabel(root, 'Title', 'Debug · 模型预览', 0, 320, 40);
+        fadeIn(title.node, new Vec3(0, 40, 0), 0, 0.4);
+
+        const backBtn = this.createButton(root, 'BtnBack', '← 返回首页', -560, 320, 200, 56, () => this.onBack());
+        pressEffect(backBtn);
+        fadeIn(backBtn, new Vec3(-60, 0, 0), 0.15);
+
         this.statusLabel = this.createLabel(root, 'Status', '请点击左侧按钮预览飞船模型', 0, 270, 26, new Color(180, 200, 230, 255));
+        fadeIn(this.statusLabel.node, new Vec3(0, -20, 0), 0.3);
 
         // 模型列表标题
-        this.createLabel(root, 'ListCaption', '飞船模型', -400, 210, 30, new Color(120, 200, 255, 255));
+        const caption = this.createLabel(root, 'ListCaption', '飞船模型', -400, 210, 30, new Color(120, 200, 255, 255));
+        fadeIn(caption.node, new Vec3(-40, 0, 0), 0.2);
+
+        // 编辑器中创建的模型选择按钮：依次从左侧滑入
+        const std = root.getChildByName('BtnShipStandard');
+        const hq = root.getChildByName('BtnShipHQ');
+        if (std) fadeIn(std, new Vec3(-80, 0, 0), 0.1);
+        if (hq) fadeIn(hq, new Vec3(-80, 0, 0), 0.22);
     }
 
     /** 模型预览根节点：放在画面右侧，位于 UI 平面之后避免深度冲突 */
@@ -186,7 +201,7 @@ export class Debug extends Component {
     }
 
     private onBack(): void {
-        director.loadScene('Home');
+        fadeOutThen(this.node, 0.2, () => director.loadScene('Home'));
     }
 
     /** 显示选中的 3D 模型 */
@@ -198,12 +213,16 @@ export class Debug extends Component {
         model.setPosition(0, 0, 0);
         model.setScale(1, 1, 1);
         this.modelRoot!.addChild(model);
-        model.updateWorldTransform(true);
+        model.updateWorldTransform();
         this.currentModel = model;
         this.spin = false;
         this.scheduleOnce(() => {
             this.fitModel(model);
             this.spin = true;
+            // 模型弹出动画：从 0.7 倍缩放弹回目标大小
+            const target = model.scale.clone();
+            model.setScale(target.x * 0.7, target.y * 0.7, target.z * 0.7);
+            tween(model).to(0.3, { scale: target }, { easing: 'backOut' }).start();
         }, 0);
         this.setStatus('已加载模型: ' + (prefab.name || 'unknown'));
     }
@@ -217,7 +236,7 @@ export class Debug extends Component {
 
     /**
      * 根据模型包围盒自动缩放并居中到 ModelRoot 原点。
-     * 注意：getWorldBounds 返回的是“世界坐标”下的包围盒，必须先减去 ModelRoot 的世界坐标，
+     * 注意：包围盒是世界坐标下的，必须先减去 ModelRoot 的世界坐标，
      * 换算成相对于 ModelRoot 的本地中心后再设置 position，否则模型会被错误地挪到世界原点附近而脱离视野。
      */
     private fitModel(model: Node): void {
@@ -231,8 +250,12 @@ export class Debug extends Component {
         const aabb = new geometry.AABB();
         const renderers = model.getComponentsInChildren(MeshRenderer);
         for (const r of renderers) {
-            if (!r.model) continue;
-            r.model.getWorldBounds(aabb);
+            const m = r.model;
+            // 3.8 的渲染 Model 没有 getWorldBounds()，只有 modelBounds（局部空间）属性；
+            // worldBounds 要等渲染管线更新一帧后才有值，这里直接用节点世界矩阵把 modelBounds
+            // 变换到世界空间，结果与调用时序无关（与引擎 Model.updateTransform 的算法一致）。
+            if (!m || !m.modelBounds) continue;
+            geometry.AABB.transform(aabb, m.modelBounds, r.node.worldMatrix);
             const c = aabb.center;
             const h = aabb.halfExtents;
             // 过滤退化的包围盒（半边长全为 0）
