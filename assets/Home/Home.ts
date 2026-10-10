@@ -1,6 +1,7 @@
 import { _decorator, Component, director, Node, Vec3, Color, UITransform, Graphics, Label } from 'cc';
 import { fadeIn, fadeOutThen, popIn, pressEffect } from '../Common/UIAnim';
 import { MusicManager } from '../Common/MusicManager';
+import { SettingsStore } from '../Common/SettingsStore';
 
 const { ccclass } = _decorator;
 
@@ -13,14 +14,30 @@ export class Home extends Component {
     private switching = false;
 
     start(): void {
+        SettingsStore.applyGraphics();
         MusicManager.init();
         this.playEnterAnim();
         this.createMusicToggle();
+        this.bindSettingsButton();
     }
 
     /** 点击 Debug 按钮：淡出后进入调试场景 */
     public onDebugClick(): void {
         this.switchScene('Debug');
+    }
+
+    /** 点击设置按钮：淡出后进入设置场景 */
+    public onSettingsClick(): void {
+        this.switchScene('Settings');
+    }
+
+    /** 代码绑定菜单面板中的设置按钮（场景中按钮未挂回调，统一由这里接管） */
+    private bindSettingsButton(): void {
+        const canvas = this.node.parent;
+        const btn = canvas?.getChildByName('MenuPanel')?.getChildByName('BtnSettings');
+        if (!btn) return;
+        btn.on(Node.EventType.TOUCH_END, () => this.onSettingsClick(), this);
+        pressEffect(btn);
     }
 
     /** 入场动画：菜单面板从左侧滑入，面板内按钮依次上浮淡入，右下角按钮弹出 */

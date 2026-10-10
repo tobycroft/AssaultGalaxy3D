@@ -8,18 +8,15 @@ import {
     AudioSource,
     AudioClip,
     resources,
-    sys,
 } from 'cc';
+import { SettingsStore } from './SettingsStore';
 
 const { ccclass } = _decorator;
-
-/** 背景音乐开关的全局配置键（localStorage 持久化） */
-const BGM_CONFIG_KEY = 'bgm_enabled';
 
 /**
  * 全局背景音乐管理器：
  * - init() 后挂到常驻节点，跨场景持续播放
- * - 开关状态存入 localStorage（全局配置），每次进页面都会读取校正
+ * - 开关与音量统一存入 SettingsStore（localStorage），每次进页面都会读取校正
  * - 音乐文件位于 resources/Music/bg
  * - 浏览器自动播放策略可能拦截首次播放，首次触摸时会自动尝试恢复
  */
@@ -54,6 +51,11 @@ export class MusicManager extends Component {
         return this.bgmOn;
     }
 
+    /** 当前音量 0~1 */
+    public get volume(): number {
+        return this.audioSource?.volume ?? SettingsStore.get('bgmVolume');
+    }
+
     private bgmOn = true;
     private clipLoaded = false;
     private audioSource: AudioSource | null = null;
@@ -63,9 +65,9 @@ export class MusicManager extends Component {
         // 必须关闭：默认 true 时跨场景重新挂载会触发自动播放，绕过开关状态
         this.audioSource.playOnAwake = false;
         this.audioSource.loop = true;
-        this.audioSource.volume = 0.6;
+        this.audioSource.volume = SettingsStore.get('bgmVolume');
 
-        this.bgmOn = MusicManager.readConfig();
+        this.bgmOn = SettingsStore.get('bgmEnabled');
         resources.load('Music/bg', AudioClip, (err, clip) => {
             if (err || !clip) {
                 console.error('[Music] 背景音乐加载失败:', err);
@@ -86,15 +88,22 @@ export class MusicManager extends Component {
     /** 切换开关并写入全局配置，返回切换后是否开启 */
     public toggle(): boolean {
         this.bgmOn = !this.bgmOn;
-        MusicManager.writeConfig(this.bgmOn);
+        SettingsStore.set('bgmEnabled', this.bgmOn);
         if (this.bgmOn) this.playSafely();
         else this.audioSource?.stop();
         return this.bgmOn;
     }
 
+    /** 设置音量（0~1）并持久化，供设置场景调用 */
+    public setVolume(v: number): void {
+        const volume = Math.min(1, Math.max(0, v));
+        SettingsStore.set('bgmVolume', volume);
+        if (this.audioSource) this.audioSource.volume = volume;
+    }
+
     /** 以全局配置为准校正播放状态（进页面时调用） */
     private syncFromConfig(): void {
-        const on = MusicManager.readConfig();
+        const on = SettingsStore.get('bgmEnabled');
         if (on === this.bgmOn) return;
         this.bgmOn = on;
         if (on) this.playSafely();
@@ -109,13 +118,5 @@ export class MusicManager extends Component {
         if (this.audioSource && !this.audioSource.playing) {
             this.audioSource.play();
         }
-    }
-
-    private static readConfig(): boolean {
-        return sys.localStorage.getItem(BGM_CONFIG_KEY) !== '0';
-    }
-
-    private static writeConfig(on: boolean): void {
-        sys.localStorage.setItem(BGM_CONFIG_KEY, on ? '1' : '0');
     }
 }
