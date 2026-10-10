@@ -19,6 +19,8 @@ import {
 
 const { ccclass } = _decorator;
 
+// 项目中的 UI 层（与 Home 场景一致：33554432）
+const UI_LAYER = 33554432;
 // 3D 模型所在层（DEFAULT = 1），UI 相机会一并渲染该层
 const MODEL_LAYER = 1;
 
@@ -30,10 +32,8 @@ export class Debug extends Component {
     private modelRoot: Node | null = null;
     private currentModel: Node | null = null;
     private statusLabel: Label | null = null;
+    private modelButtonContainer: Node | null = null;
     private spin = true;
-
-    // 启动后由 loadModels() 填充：模型名 -> 预制体
-    private models: Record<string, Prefab> = {};
 
     onLoad(): void {
         this.addLights();
@@ -49,14 +49,13 @@ export class Debug extends Component {
     }
 
     /**
-     * 绑定场景中已固定摆放的 UI 节点（标题 / 状态 / 返回按钮）。
-     * 真正的模型选择按钮 BtnShipStandard / BtnShipHQ 在编辑器里已通过
-     * clickEvent 绑定到本脚本的 onSelectSpaceshipStandard / onSelectSpaceshipHQ，
-     * 这里只补一个返回按钮的可见圆角背景。
+     * 绑定场景中已固定摆放的 UI 节点（标题 / 状态 / 返回按钮 / 模型列表容器）。
+     * 模型列表按钮由 loadModels() 动态生成、统一挂在 ModelButtons 容器内。
      */
     private bindSceneUI(): void {
         const canvas = this.node;
         this.statusLabel = canvas.getChildByName('StatusLabel')?.getComponent(Label) ?? null;
+        this.modelButtonContainer = canvas.getChildByName('ModelButtons') ?? null;
 
         // 给返回按钮补一个可见的圆角背景（节点本身在场景中固定，可拖动）
         const back = canvas.getChildByName('BackButton');
@@ -92,50 +91,92 @@ export class Debug extends Component {
         this.node.addChild(this.modelRoot);
     }
 
-    /** 动态读取 resources/Model 下的所有模型，建立「模型名 -> 预制体」映射 */
+    /**
+     * 统一的模型列表：自动列举 resources/Model 下所有模型，
+     * 全部加载完成后按路径排序一次性生成按钮（统一样式、统一位置）。
+     * 按钮标签取模型文件名（如 default_spaceship / station1_tiangong）。
+     */
     private loadModels(): void {
-        resources.loadDir('Model', Prefab, (err, assets) => {
-            if (err) {
-                this.setStatus('加载模型列表失败: ' + err.message);
-                return;
-            }
-            if (!assets || assets.length === 0) {
-                this.setStatus('未找到任何模型（请将模型放入 assets/resources/Model 目录）');
-                return;
-            }
-            assets.forEach((a) => {
-                this.models[(a as Prefab).name] = a as Prefab;
-            });
-            this.setStatus('点击左侧按钮预览模型');
-        });
-    }
-
-    /** 场景里「Spaceship · 标准版」按钮（BtnShipStandard）的点击事件 */
-    private onSelectSpaceshipStandard(): void {
-        this.selectModel('default_spaceship');
-    }
-
-    /** 场景里「Spaceship · 高清版」按钮（BtnShipHQ）的点击事件 */
-    private onSelectSpaceshipHQ(): void {
-        this.selectModel('default_hq');
-    }
-
-    /** 根据模型名显示对应 3D 模型（优先用已加载的映射，未就绪时兜底按相对路径加载） */
-    private selectModel(name: string): void {
-        const cached = this.models[name];
-        if (cached) {
-            this.displayModel(cached);
+        const infos = resources.getDirWithPath('Model', Prefab);
+        if (!infos || infos.length === 0) {
+            this.setStatus('未找到任何模型（请将模型放入 assets/resources/Model 目录）');
             return;
         }
-        this.setStatus('模型加载中...');
-        resources.load('Model/' + name, Prefab, (err, prefab) => {
-            if (err || !prefab) {
-                this.setStatus('加载模型失败: ' + (err ? err.message : name));
-                return;
-            }
-            this.models[name] = prefab;
-            this.displayModel(prefab);
+        infos.sort((a, b) => a.path.localeCompare(b.path));
+
+        const prefabs: (Prefab | null)[] = new Array(infos.length).fill(null);
+        let pending = infos.length;
+        infos.forEach((info, i) => {
+            resources.load(info.path, Prefab, (err, prefab) => {
+                prefabs[i] = err ? null : prefab;
+                pending--;
+                if (pending > 0) return;
+                const list = prefabs.filter((p): p is Prefab => !!p);
+                if (list.length === 0) {
+                    this.setStatus('模型加载失败');
+                    return;
+                }
+                this.showModelButtons(infos, list);
+                this.setStatus('共找到 ' + list.length + ' 个模型，点击左侧按钮预览');
+            });
         });
+    }
+
+    /**
+     * 在固定的 ModelButtons 容器内，为每个模型生成统一样式的按钮。
+     * 容器本身可在编辑器里拖动，从而整体移动模型列表。
+     */
+    private showModelButtons(infos: { path: string }[], prefabs: Prefab[]): void {
+        const parent = this.modelButtonContainer ?? this.node;
+        const startY = 150;
+        const gap = 74;
+        prefabs.forEach((prefab, i) => {
+            const y = startY - i * gap;
+            const label = infos[i].path.split('/').pop() || 'model_' + i;
+            this.createButton(parent, 'Btn_' + label, label, -400, y, 300, 60, () => {
+                this.displayModel(prefab);
+            });
+        });
+    }
+
+    /** 运行时动态生成单个模型按钮（挂在固定的 ModelButtons 容器内） */
+    private createButton(
+        parent: Node,
+        name: string,
+        label: string,
+        x: number,
+        y: number,
+        w: number,
+        h: number,
+        onClick?: () => void,
+    ): Node {
+        const btn = new Node(name);
+        btn.layer = UI_LAYER;
+        btn.setPosition(x, y, 0);
+        const ut = btn.addComponent(UITransform);
+        ut.setContentSize(w, h);
+        ut.setAnchorPoint(0.5, 0.5);
+        const g = btn.addComponent(Graphics);
+        this.drawButtonBg(g, w, h, new Color(45, 74, 122, 255));
+
+        const lab = new Node('Label');
+        lab.layer = UI_LAYER;
+        const lut = lab.addComponent(UITransform);
+        lut.setContentSize(w, h);
+        const l = lab.addComponent(Label);
+        l.string = label;
+        l.fontSize = 26;
+        l.color = new Color(255, 255, 255, 255);
+        l.horizontalAlign = Label.HorizontalAlign.CENTER;
+        l.verticalAlign = Label.VerticalAlign.CENTER;
+        btn.addChild(lab);
+
+        if (onClick) {
+            // cc 没有顶层 EventType 导出，触摸事件必须用 Node.EventType
+            btn.on(Node.EventType.TOUCH_END, onClick, this);
+        }
+        parent.addChild(btn);
+        return btn;
     }
 
     private drawButtonBg(g: Graphics, w: number, h: number, color: Color): void {
