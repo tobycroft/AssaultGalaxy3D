@@ -3,6 +3,7 @@ import {
     Component,
     Color,
     director,
+    EventTouch,
     game,
     Graphics,
     Label,
@@ -52,22 +53,13 @@ export class Settings extends Component {
     private buildRows(): OptionRow[] {
         return [
             {
-                title: '背景音乐音量',
-                options: [
-                    { label: '0%', value: 0 },
-                    { label: '25%', value: 0.25 },
-                    { label: '50%', value: 0.5 },
-                    { label: '75%', value: 0.75 },
-                    { label: '100%', value: 1 },
-                ],
-                current: () => SettingsStore.get('bgmVolume'),
-                apply: (v) => MusicManager.get()?.setVolume(v as number),
-            },
-            {
                 title: '帧率',
                 options: [
                     { label: '30 FPS', value: 30 },
                     { label: '60 FPS', value: 60 },
+                    { label: '90 FPS', value: 90 },
+                    { label: '144 FPS', value: 144 },
+                    { label: '无限', value: 999 },
                 ],
                 current: () => SettingsStore.get('frameRate'),
                 apply: (v) => {
@@ -107,8 +99,11 @@ export class Settings extends Component {
         pressEffect(back);
         fadeIn(back, new Vec3(-60, 0, 0), 0.15);
 
-        // 三组配置行：垂直排布
-        const startY = 160;
+        // 音量行：滑块
+        this.buildVolumeSlider(160);
+
+        // 帧率 / 画质行：选项按钮
+        const startY = 30;
         const rowGap = 130;
         this.optionRows.forEach((row, i) => {
             const y = startY - i * rowGap;
@@ -120,11 +115,85 @@ export class Settings extends Component {
         });
     }
 
+    /** 背景音乐音量行：标题 + 滑块 + 百分比，拖动即时生效并持久化 */
+    private buildVolumeSlider(y: number): void {
+        const canvas = this.node;
+        const caption = this.createLabel(canvas, 'Caption_Volume', '背景音乐音量', -400, y, 30,
+            new Color(120, 200, 255, 255));
+        caption.horizontalAlign = Label.HorizontalAlign.LEFT;
+        fadeIn(caption.node, new Vec3(-40, 0, 0), 0.2);
+
+        const pct = this.createLabel(canvas, 'VolumePct', '', 430, y, 24);
+        pct.color = BTN_ACTIVE;
+
+        const slider = this.createSlider(canvas, 100, y, 500, 24, SettingsStore.get('bgmVolume'),
+            (v: number) => {
+                const mm = MusicManager.get();
+                if (mm) mm.setVolume(v);
+                else SettingsStore.set('bgmVolume', v);
+                pct.string = `${Math.round(v * 100)}%`;
+            });
+        fadeIn(slider, new Vec3(0, -20, 0), 0.25);
+    }
+
+    /** 自绘滑块：轨道 + 已填充部分 + 圆形手柄，点击/拖动即时回调 */
+    private createSlider(parent: Node, x: number, y: number, w: number, h: number,
+        init: number, onChange: (v: number) => void): Node {
+        const node = new Node('Slider');
+        node.layer = UI_LAYER;
+        node.setPosition(x, y, 0);
+        node.addComponent(UITransform).setContentSize(w, h);
+
+        // 手柄（子节点，横向移动）
+        const handle = new Node('Handle');
+        handle.layer = UI_LAYER;
+        const handleSize = h + 10;
+        handle.addComponent(UITransform).setContentSize(handleSize, handleSize);
+        const hg = handle.addComponent(Graphics);
+        hg.fillColor = new Color(255, 255, 255, 255);
+        hg.circle(0, 0, handleSize / 2);
+        hg.fill();
+        node.addChild(handle);
+
+        // 轨道与填充条（每次变化重绘）
+        const g = node.addComponent(Graphics);
+        const drawBar = (p: number): void => {
+            g.clear();
+            g.fillColor = new Color(60, 90, 140, 255);
+            g.roundRect(-w / 2, -h / 2, w, h, h / 2);
+            g.fill();
+            g.fillColor = new Color(120, 200, 255, 255);
+            g.roundRect(-w / 2, -h / 2, Math.max(h, p * w), h, h / 2);
+            g.fill();
+        };
+        const setProgress = (v: number): void => {
+            const p = Math.min(1, Math.max(0, v));
+            drawBar(p);
+            handle.setPosition(-w / 2 + p * w, 0, 0);
+            onChange(p);
+        };
+
+        const ut = node.getComponent(UITransform)!;
+        const touchToProgress = (event: EventTouch): void => {
+            const loc = event.getUILocation();
+            const local = ut.convertToNodeSpaceAR(new Vec3(loc.x, loc.y, 0));
+            setProgress((local.x + w / 2) / w);
+        };
+        node.on(Node.EventType.TOUCH_START, touchToProgress, this);
+        node.on(Node.EventType.TOUCH_MOVE, touchToProgress, this);
+        node.on(Node.EventType.TOUCH_END, touchToProgress, this);
+
+        setProgress(init);
+        parent.addChild(node);
+        return node;
+    }
+
     /** 为一行配置生成选项按钮（当前选中项高亮白字，其余灰色） */
     private createOptionButtons(row: OptionRow, x: number, y: number, delay: number): void {
         const canvas = this.node;
         const labels: Label[] = [];
-        const gap = 140;
+        // 选项超过 4 个时收窄间距，避免整行超出画布
+        const gap = row.options.length > 4 ? 115 : 140;
         row.options.forEach((opt, i) => {
             const ox = x + i * gap;
             const active = row.current() === opt.value;

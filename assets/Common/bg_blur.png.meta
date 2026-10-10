@@ -135,7 +135,7 @@
   "userData": {
     "type": "sprite-frame",
     "redirect": "02cd6613-9d31-4323-beeb-0f2f5ee306ea@6c48a",
-    "hasAlpha": false,
+    "hasAlpha": true,
     "fixAlphaTransparencyArtifacts": false
   }
 }
