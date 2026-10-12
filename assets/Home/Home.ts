@@ -2,6 +2,8 @@ import { _decorator, Component, director, Node, Vec3, Color, UITransform, Graphi
 import { fadeIn, fadeOutThen, popIn, pressEffect } from '../Common/UIAnim';
 import { MusicManager } from '../Common/MusicManager';
 import { SettingsStore } from '../Common/SettingsStore';
+import { AuthPanel } from '../Common/AuthPanel';
+import { Session } from '../Common/Session';
 
 const { ccclass } = _decorator;
 
@@ -12,6 +14,10 @@ const { ccclass } = _decorator;
 @ccclass('Home')
 export class Home extends Component {
     private switching = false;
+    /** 登录/注册浮层实例（懒构建，复用以避免重复节点） */
+    private authPanel: AuthPanel | null = null;
+    /** 登录入口按钮文案（登录后显示为用户名） */
+    private loginBtnLabel: Label | null = null;
 
     start(): void {
         SettingsStore.applyGraphics();
@@ -19,6 +25,7 @@ export class Home extends Component {
         this.playEnterAnim();
         this.createMusicToggle();
         this.bindSettingsButton();
+        this.bindAuthButtons();
     }
 
     /** 点击 Debug 按钮：淡出后进入调试场景 */
@@ -109,5 +116,86 @@ export class Home extends Component {
 
         canvas.addChild(btn);
         fadeIn(btn, new Vec3(0, 30, 0), 0.5);
+    }
+
+    /** 登录/注册入口：底部两个按钮，点击唤起认证浮层 */
+    private bindAuthButtons(): void {
+        const canvas = this.node.parent;
+        if (!canvas) return;
+        if (!this.authPanel) this.authPanel = new AuthPanel(canvas);
+        this.authPanel.onSuccess = (user): void => {
+            // 登录/注册成功后，入口按钮文案改为用户名
+            if (this.loginBtnLabel) this.loginBtnLabel.string = user.username;
+        };
+
+        const loggedIn = Session.isLoggedIn();
+        const loginBtn = this.createAuthButton(
+            canvas,
+            'BtnLogin',
+            loggedIn ? Session.getUsername() || '已登录' : '登录',
+            -110,
+            -310,
+            200,
+            52,
+            (): void => {
+                if (Session.isLoggedIn()) return;
+                this.authPanel!.open('login');
+            },
+        );
+        pressEffect(loginBtn);
+        this.loginBtnLabel = loginBtn.getChildByName('Label')!.getComponent(Label)!;
+        fadeIn(loginBtn, new Vec3(0, 30, 0), 0.5);
+
+        const registerBtn = this.createAuthButton(
+            canvas,
+            'BtnRegister',
+            '注册',
+            110,
+            -310,
+            200,
+            52,
+            (): void => {
+                this.authPanel!.open('register');
+            },
+        );
+        pressEffect(registerBtn);
+        fadeIn(registerBtn, new Vec3(0, 30, 0), 0.55);
+    }
+
+    /** 自绘圆角按钮（风格对齐 Settings.ts） */
+    private createAuthButton(
+        parent: Node,
+        name: string,
+        label: string,
+        x: number,
+        y: number,
+        w: number,
+        h: number,
+        onClick?: () => void,
+    ): Node {
+        const btn = new Node(name);
+        btn.layer = this.node.parent!.layer;
+        btn.setPosition(x, y, 0);
+        const ut = btn.addComponent(UITransform);
+        ut.setContentSize(w, h);
+        const g = btn.addComponent(Graphics);
+        g.fillColor = new Color(45, 74, 122, 255);
+        g.roundRect(-w / 2, -h / 2, w, h, 10);
+        g.fill();
+
+        const labNode = new Node('Label');
+        labNode.layer = this.node.parent!.layer;
+        labNode.addComponent(UITransform).setContentSize(w, h);
+        const l = labNode.addComponent(Label);
+        l.string = label;
+        l.fontSize = 24;
+        l.color = new Color(255, 255, 255, 255);
+        l.horizontalAlign = Label.HorizontalAlign.CENTER;
+        l.verticalAlign = Label.VerticalAlign.CENTER;
+        btn.addChild(labNode);
+
+        if (onClick) btn.on(Node.EventType.TOUCH_END, onClick, this);
+        parent.addChild(btn);
+        return btn;
     }
 }
