@@ -1,31 +1,28 @@
-import { Color, EditBox, Graphics, Label, Node, UITransform, Vec3 } from 'cc';
-import { fadeIn, fadeOutThen, pressEffect } from './UIAnim';
-import { Api, AuthUser } from './Api';
-import { Session } from './Session';
+import { ccclass, Color, Component, director, EditBox, Graphics, Label, Node, UITransform, Vec3 } from 'cc';
+import { fadeIn, pressEffect } from '../Common/UIAnim';
+import { login, register, AuthUser } from '../Common/Api';
+import { Session } from '../Common/Session';
 
 /** 认证模式：登录 / 注册 */
-export type AuthMode = 'login' | 'register';
+type AuthMode = 'login' | 'register';
 
 /** UI 层 bitmask，与项目 Settings.ts 保持一致 */
 const UI_LAYER = 33554432;
-/** 面板主色（深蓝按钮） */
 const BTN_COLOR = new Color(45, 74, 122, 255);
 const BTN_ACTIVE = new Color(255, 255, 255, 255);
 const BTN_INACTIVE = new Color(150, 150, 150, 255);
 const INPUT_BG = new Color(25, 40, 65, 255);
 const INPUT_BORDER = new Color(120, 200, 255, 255);
+const BG_COLOR = new Color(12, 18, 30, 255);
 
 /**
- * 登录 / 注册浮层（纯代码构建，不依赖 .scene）。
- * 通过 Home 菜单按钮唤起，调用后端 /v1/user/register 与 /v1/user/login，
- * 成功后用 Session 持久化 token，并触发 onSuccess 回调。
+ * 独立的登录 / 注册页面（单独场景 Login.scene）。
+ * 不挂在 Home 内，由 Home 菜单通过 director.loadScene('Login') 进入。
+ * UI 在 onLoad 中纯代码构建（风格对齐 Settings.ts），调用后端
+ * /v1/user/register 与 /v1/user/login，成功后用 Session 持久化 token 并返回首页。
  */
-export class AuthPanel {
-    /** 登录/注册成功后的回调（拿到用户信息） */
-    public onSuccess?: (user: AuthUser) => void;
-
-    private parent: Node;
-    private root: Node | null = null;
+@ccclass('Login')
+export class Login extends Component {
     private mode: AuthMode = 'login';
     private usernameBox!: EditBox;
     private passwordBox!: EditBox;
@@ -35,46 +32,24 @@ export class AuthPanel {
     private switchLabel!: Label;
     private msgLabel!: Label;
 
-    constructor(parent: Node) {
-        this.parent = parent;
-    }
-
-    /** 打开浮层（可重复调用切换模式） */
-    public open(mode: AuthMode): void {
-        if (!this.root) this.build();
-        this.mode = mode;
+    protected onLoad(): void {
+        this.build();
         this.applyMode();
-        this.usernameBox.string = '';
-        this.passwordBox.string = '';
-        this.setMessage('');
-        this.root!.active = true;
-        fadeIn(this.root!, new Vec3(0, 30, 0), 0, 0.25);
+        fadeIn(this.node, new Vec3(0, 30, 0), 0, 0.25);
     }
 
-    /** 关闭浮层 */
-    public close(): void {
-        if (!this.root || !this.root.active) return;
-        const r = this.root;
-        fadeOutThen(r, 0.2, () => {
-            r.active = false;
-        });
-    }
-
-    /** 首次构建浮层节点（只构建一次，之后靠显隐复用） */
+    /** 构建登录/注册页面 UI */
     private build(): void {
-        const root = new Node('AuthPanel');
-        root.layer = UI_LAYER;
-        root.setPosition(0, 0, 0);
+        const root = this.node;
 
-        // 全屏遮罩：拦截点击，避免穿透到下层 UI
-        const mask = new Node('Mask');
-        mask.layer = UI_LAYER;
-        mask.addComponent(UITransform).setContentSize(2000, 1200);
-        const mg = mask.addComponent(Graphics);
-        mg.fillColor = new Color(0, 0, 0, 140);
-        mg.fillRect(-1000, -600, 2000, 1200);
-        mask.on(Node.EventType.TOUCH_START, () => {}, this);
-        root.addChild(mask);
+        // 背景
+        const bg = new Node('Background');
+        bg.layer = UI_LAYER;
+        bg.addComponent(UITransform).setContentSize(2000, 1200);
+        const bgG = bg.addComponent(Graphics);
+        bgG.fillColor = BG_COLOR;
+        bgG.fillRect(-1000, -600, 2000, 1200);
+        root.addChild(bg);
 
         // 卡片
         const cardW = 560;
@@ -94,7 +69,6 @@ export class AuthPanel {
 
         // 标题
         this.titleLabel = this.createLabel(card, 'Title', '登录', 0, 200, 36);
-        fadeIn(this.titleLabel.node, new Vec3(0, 30, 0), 0, 0.3);
 
         // 用户名 / 密码输入框
         this.usernameBox = this.createEditBox(card, 'UsernameBox', '用户名（3-50 字符）', 0, 110, 420, 56, false, 50);
@@ -104,11 +78,11 @@ export class AuthPanel {
         this.submitBtn = this.createButton(card, 'Submit', '登录', 0, -45, 420, 56, () => this.onSubmit());
         pressEffect(this.submitBtn);
         this.submitLabel = this.submitBtn.getChildByName('Label')!.getComponent(Label)!;
-        fadeIn(this.submitBtn, new Vec3(0, -20, 0), 0.25);
 
         // 模式切换文案
         const switchBtn = this.createButton(card, 'Switch', '没有账号？去注册', 0, -115, 280, 40, () => {
-            this.open(this.mode === 'login' ? 'register' : 'login');
+            this.mode = this.mode === 'login' ? 'register' : 'login';
+            this.applyMode();
         });
         pressEffect(switchBtn);
         this.switchLabel = switchBtn.getChildByName('Label')!.getComponent(Label)!;
@@ -118,15 +92,13 @@ export class AuthPanel {
         this.msgLabel = this.createLabel(card, 'Message', '', 0, -165, 22, BTN_INACTIVE);
         this.msgLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
 
-        // 关闭按钮（右上角 ×）
-        const closeBtn = this.createButton(card, 'Close', '×', cardW / 2 - 34, cardH / 2 - 34, 48, 48, () => this.close());
-        pressEffect(closeBtn);
-        const cl = closeBtn.getChildByName('Label')!.getComponent(Label)!;
-        cl.color = BTN_INACTIVE;
-
-        this.parent.addChild(root);
-        this.root = root;
-        root.active = false;
+        // 返回首页按钮
+        const backBtn = this.createButton(card, 'Back', '← 返回首页', cardW / 2 - 70, cardH / 2 - 30, 140, 40, () => {
+            director.loadScene('Home');
+        });
+        pressEffect(backBtn);
+        const bl = backBtn.getChildByName('Label')!.getComponent(Label)!;
+        bl.color = BTN_INACTIVE;
     }
 
     /** 根据当前模式刷新标题、按钮与切换文案 */
@@ -140,9 +112,10 @@ export class AuthPanel {
             this.submitLabel.string = '注册';
             this.switchLabel.string = '已有账号？去登录';
         }
+        this.setMessage('');
     }
 
-    /** 提交：调用后端接口，成功则保存会话 */
+    /** 提交：调用后端接口，成功则保存会话并返回首页 */
     private async onSubmit(): Promise<void> {
         const username = this.usernameBox.string.trim();
         const password = this.passwordBox.string;
@@ -160,19 +133,16 @@ export class AuthPanel {
         try {
             const resp =
                 this.mode === 'register'
-                    ? await Api.register(username, password)
-                    : await Api.login(username, password);
+                    ? await register(username, password)
+                    : await login(username, password);
 
             if (resp.code === 0 && resp.data && (resp.data as AuthUser).token) {
                 const user = resp.data as AuthUser;
                 const uname = user.username || username;
                 Session.save({ username: uname, token: user.token });
                 this.setMessage('成功：' + (resp.echo || 'OK'));
-                if (this.onSuccess) this.onSuccess(user);
-                // 1 秒后自动关闭
-                if (this.root) {
-                    setTimeout(() => this.close(), 1000);
-                }
+                // 1 秒后返回首页
+                this.scheduleOnce(() => director.loadScene('Home'), 1);
             } else {
                 this.setMessage(resp.echo || '操作失败');
             }
@@ -188,7 +158,6 @@ export class AuthPanel {
     }
 
     private setBusy(busy: boolean): void {
-        // 简易禁用：置灰提交按钮
         if (this.submitBtn) {
             const l = this.submitBtn.getChildByName('Label')!.getComponent(Label)!;
             l.color = busy ? BTN_INACTIVE : BTN_ACTIVE;
@@ -274,7 +243,6 @@ export class AuthPanel {
         node.setPosition(x, y, 0);
         node.addComponent(UITransform).setContentSize(w, h);
 
-        // 背景（与按钮风格一致的圆角矩形）
         const g = node.addComponent(Graphics);
         g.fillColor = INPUT_BG;
         g.roundRect(-w / 2, -h / 2, w, h, 8);
@@ -286,7 +254,6 @@ export class AuthPanel {
 
         const editBox = node.addComponent(EditBox);
 
-        // 文本标签
         const textNode = new Node('textLabel');
         textNode.layer = UI_LAYER;
         textNode.addComponent(UITransform).setContentSize(w - 24, h);
@@ -299,7 +266,6 @@ export class AuthPanel {
         textLabel.verticalAlign = Label.VerticalAlign.CENTER;
         node.addChild(textNode);
 
-        // 占位标签
         const phNode = new Node('placeholderLabel');
         phNode.layer = UI_LAYER;
         phNode.addComponent(UITransform).setContentSize(w - 24, h);

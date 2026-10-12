@@ -2,22 +2,17 @@ import { _decorator, Component, director, Node, Vec3, Color, UITransform, Graphi
 import { fadeIn, fadeOutThen, popIn, pressEffect } from '../Common/UIAnim';
 import { MusicManager } from '../Common/MusicManager';
 import { SettingsStore } from '../Common/SettingsStore';
-import { AuthPanel } from '../Common/AuthPanel';
-import { Session } from '../Common/Session';
 
 const { ccclass } = _decorator;
 
 /**
  * 首页控制器。
  * 负责 “Debug” 调试按钮入口、菜单 / UI 的入场动画、切换场景过渡，以及背景音乐开关。
+ * 登录 / 注册入口跳转到独立的 Login 场景（不在 Home 内实现）。
  */
 @ccclass('Home')
 export class Home extends Component {
     private switching = false;
-    /** 登录/注册浮层实例（懒构建，复用以避免重复节点） */
-    private authPanel: AuthPanel | null = null;
-    /** 登录入口按钮文案（登录后显示为用户名） */
-    private loginBtnLabel: Label | null = null;
 
     start(): void {
         SettingsStore.applyGraphics();
@@ -25,7 +20,7 @@ export class Home extends Component {
         this.playEnterAnim();
         this.createMusicToggle();
         this.bindSettingsButton();
-        this.bindAuthButtons();
+        this.bindLoginEntry();
     }
 
     /** 点击 Debug 按钮：淡出后进入调试场景 */
@@ -118,52 +113,26 @@ export class Home extends Component {
         fadeIn(btn, new Vec3(0, 30, 0), 0.5);
     }
 
-    /** 登录/注册入口：底部两个按钮，点击唤起认证浮层 */
-    private bindAuthButtons(): void {
+    /** 登录/注册入口：底部按钮，点击切换到独立的 Login 场景（不在 Home 内实现） */
+    private bindLoginEntry(): void {
         const canvas = this.node.parent;
         if (!canvas) return;
-        if (!this.authPanel) this.authPanel = new AuthPanel(canvas);
-        this.authPanel.onSuccess = (user): void => {
-            // 登录/注册成功后，入口按钮文案改为用户名
-            if (this.loginBtnLabel) this.loginBtnLabel.string = user.username;
-        };
-
-        const loggedIn = Session.isLoggedIn();
-        const loginBtn = this.createAuthButton(
+        const btn = this.createEntryButton(
             canvas,
-            'BtnLogin',
-            loggedIn ? Session.getUsername() || '已登录' : '登录',
-            -110,
+            'BtnLoginEntry',
+            '登录 / 注册',
+            0,
             -310,
-            200,
+            220,
             52,
-            (): void => {
-                if (Session.isLoggedIn()) return;
-                this.authPanel!.open('login');
-            },
+            (): void => this.switchScene('Login'),
         );
-        pressEffect(loginBtn);
-        this.loginBtnLabel = loginBtn.getChildByName('Label')!.getComponent(Label)!;
-        fadeIn(loginBtn, new Vec3(0, 30, 0), 0.5);
-
-        const registerBtn = this.createAuthButton(
-            canvas,
-            'BtnRegister',
-            '注册',
-            110,
-            -310,
-            200,
-            52,
-            (): void => {
-                this.authPanel!.open('register');
-            },
-        );
-        pressEffect(registerBtn);
-        fadeIn(registerBtn, new Vec3(0, 30, 0), 0.55);
+        pressEffect(btn);
+        fadeIn(btn, new Vec3(0, 30, 0), 0.5);
     }
 
-    /** 自绘圆角按钮（风格对齐 Settings.ts） */
-    private createAuthButton(
+    /** 自绘圆角按钮（风格对齐 Settings.ts），点击后带淡出切换场景 */
+    private createEntryButton(
         parent: Node,
         name: string,
         label: string,
