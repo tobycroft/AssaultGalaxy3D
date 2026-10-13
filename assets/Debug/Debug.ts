@@ -126,7 +126,8 @@ export class Debug extends Component {
         // 外圈旋转装饰弧（两段错位弧线，持续旋转表示“进行中”）
         const spin = new Node('Spin');
         spin.layer = layer;
-        spin.addComponent(UITransform).setContentSize(120, 120);
+        const spinUt = spin.addComponent(UITransform);
+        spinUt.setContentSize(120, 120);
         const sg = spin.addComponent(Graphics);
         const R = LOADING_RING_R;
         sg.strokeColor = new Color(0, 214, 255, 120);
@@ -137,7 +138,8 @@ export class Debug extends Component {
         sg.arc(0, 0, R + 12, Math.PI, Math.PI * 1.55);
         sg.stroke();
         ring.addChild(spin);
-        tween(spin).by(1.4, { angle: 360 }).repeatForever().start();
+        // 注意：3.x 的 Node 没有 angle 属性，绕 Z 轴旋转须 tween UITransform.angle
+        tween(spinUt).by(1.4, { angle: 360 }).repeatForever().start();
 
         // 进度文字
         const labNode = new Node('Progress');
@@ -239,13 +241,15 @@ export class Debug extends Component {
     private loadModels(): void {
         const infos = resources.getDirWithPath('Model', Prefab);
         if (!infos || infos.length === 0) {
+            this.hideLoading();
             this.setStatus('未找到任何模型（请将模型放入 assets/resources/Model 目录）');
             return;
         }
         infos.sort((a, b) => a.path.localeCompare(b.path));
 
         const loaded: { path: string; prefab: Prefab }[] = [];
-        let pending = infos.length;
+        const total = infos.length;
+        let pending = total;
         infos.forEach((info) => {
             resources.load(info.path, Prefab, (err, prefab) => {
                 // 资源异步返回时场景可能已切换（组件已销毁，this.node 为 null），
@@ -253,13 +257,19 @@ export class Debug extends Component {
                 if (!this.isValid) return;
                 if (!err && prefab) loaded.push({ path: info.path, prefab });
                 pending--;
+                this.updateLoading(loaded.length, total);
                 if (pending > 0) return;
                 if (loaded.length === 0) {
+                    this.hideLoading();
                     this.setStatus('模型加载失败');
                     return;
                 }
-                this.showModelButtons(loaded);
-                this.setStatus('共找到 ' + loaded.length + ' 个模型，点击左侧按钮预览');
+                // 加载完成：先淡出加载界面，再展示模型列表
+                this.hideLoading(() => {
+                    if (!this.isValid) return;
+                    this.showModelButtons(loaded);
+                    this.setStatus('共找到 ' + loaded.length + ' 个模型，点击左侧按钮预览');
+                });
             });
         });
     }
@@ -297,15 +307,19 @@ export class Debug extends Component {
         const colW = canvasW / categories.length;
         const btnW = colW - 40;
 
+        let btnIndex = 0;
         categories.forEach((category, i) => {
             const x = -canvasW / 2 + colW * (i + 0.5);
             this.createCategoryLabel(parent, category, x, topY - CAPTION_H / 2);
             let cursor = topY - CAPTION_H - CAPTION_MARGIN;
             for (const item of groups.get(category)!) {
                 const label = item.path.split('/').pop() || 'model';
-                this.createButton(parent, 'Btn_' + label, label, x, cursor - BTN_H / 2, btnW, BTN_H, () => {
+                const btn = this.createButton(parent, 'Btn_' + label, label, x, cursor - BTN_H / 2, btnW, BTN_H, () => {
                     this.displayModel(item.prefab);
                 });
+                // 错峰淡入：加载完成后按钮逐项亮相
+                fadeIn(btn, new Vec3(0, -20, 0), 0.04 * btnIndex);
+                btnIndex++;
                 cursor -= BTN_H + BTN_MARGIN;
             }
         });
