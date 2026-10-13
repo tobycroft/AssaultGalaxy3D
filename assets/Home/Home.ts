@@ -1,4 +1,4 @@
-import { _decorator, Component, director, Node, Vec3, Color, UITransform, Graphics, Label } from 'cc';
+import { _decorator, Component, director, game, Node, Vec3, Color, UITransform, Graphics, Label } from 'cc';
 import { fadeIn, fadeOutThen, popIn, pressEffect } from '../Common/UIAnim';
 import { MusicManager } from '../Common/MusicManager';
 import { SettingsStore } from '../Common/SettingsStore';
@@ -14,6 +14,8 @@ const { ccclass } = _decorator;
 @ccclass('Home')
 export class Home extends Component {
     private switching = false;
+    /** 退出确认框节点（打开时唯一，用于关闭/销毁） */
+    private exitConfirmNode: Node | null = null;
 
     start(): void {
         SettingsStore.applyGraphics();
@@ -26,6 +28,7 @@ export class Home extends Component {
         this.playEnterAnim();
         this.createMusicToggle();
         this.bindSettingsButton();
+        this.bindExitButton();
         this.bindLoginEntry();
     }
 
@@ -45,6 +48,15 @@ export class Home extends Component {
         const btn = canvas?.getChildByName('MenuPanel')?.getChildByName('BtnSettings');
         if (!btn) return;
         btn.on(Node.EventType.TOUCH_END, () => this.onSettingsClick(), this);
+        pressEffect(btn);
+    }
+
+    /** 代码绑定菜单面板中的退出按钮：点击弹出退出确认框 */
+    private bindExitButton(): void {
+        const canvas = this.node.parent;
+        const btn = canvas?.getChildByName('MenuPanel')?.getChildByName('BtnExit');
+        if (!btn) return;
+        btn.on(Node.EventType.TOUCH_END, () => this.openExitConfirm(), this);
         pressEffect(btn);
     }
 
@@ -184,6 +196,7 @@ export class Home extends Component {
         w: number,
         h: number,
         onClick?: () => void,
+        color: Color = new Color(45, 74, 122, 255),
     ): Node {
         const btn = new Node(name);
         btn.layer = this.node.parent!.layer;
@@ -191,7 +204,7 @@ export class Home extends Component {
         const ut = btn.addComponent(UITransform);
         ut.setContentSize(w, h);
         const g = btn.addComponent(Graphics);
-        g.fillColor = new Color(45, 74, 122, 255);
+        g.fillColor = color;
         g.roundRect(-w / 2, -h / 2, w, h, 10);
         g.fill();
 
@@ -209,5 +222,89 @@ export class Home extends Component {
         if (onClick) btn.on(Node.EventType.TOUCH_END, onClick, this);
         parent.addChild(btn);
         return btn;
+    }
+
+    /** 弹出退出确认框（半透明遮罩 + 面板 + 确认/取消），确认后调用 game.end() 退出 */
+    private openExitConfirm(): void {
+        const canvas = this.node.parent;
+        if (!canvas || this.exitConfirmNode) return;
+        const layer = canvas.layer;
+
+        const root = new Node('ExitConfirm');
+        root.layer = layer;
+
+        // 半透明遮罩：点击遮罩视为取消
+        const mask = new Node('Mask');
+        mask.layer = layer;
+        mask.addComponent(UITransform).setContentSize(1280, 720);
+        const mg = mask.addComponent(Graphics);
+        mg.fillColor = new Color(0, 0, 0, 150);
+        mg.fillRect(-640, -360, 1280, 720);
+        mask.on(Node.EventType.TOUCH_END, () => this.closeExitConfirm(), this);
+        root.addChild(mask);
+
+        // 面板
+        const pw = 440;
+        const ph = 230;
+        const panel = new Node('Panel');
+        panel.layer = layer;
+        panel.addComponent(UITransform).setContentSize(pw, ph);
+        const pg = panel.addComponent(Graphics);
+        pg.fillColor = new Color(22, 34, 54, 255);
+        pg.roundRect(-pw / 2, -ph / 2, pw, ph, 16);
+        pg.fill();
+        pg.strokeColor = new Color(120, 200, 255, 255);
+        pg.lineWidth = 2;
+        pg.roundRect(-pw / 2, -ph / 2, pw, ph, 16);
+        pg.stroke();
+        root.addChild(panel);
+
+        // 文案
+        this.createTextLabel(panel, 'Title', '退出游戏', 0, 68, 32, new Color(255, 255, 255, 255));
+        this.createTextLabel(panel, 'Msg', '确认要退出游戏吗？', 0, 16, 22, new Color(170, 182, 198, 255));
+
+        // 确认 / 取消
+        const confirmBtn = this.createEntryButton(panel, 'BtnConfirm', '确认退出', -85, -55, 150, 52,
+            () => game.end(), new Color(168, 66, 74, 255));
+        pressEffect(confirmBtn);
+        const cancelBtn = this.createEntryButton(panel, 'BtnCancel', '取消', 85, -55, 150, 52,
+            () => this.closeExitConfirm());
+        pressEffect(cancelBtn);
+
+        canvas.addChild(root);
+        this.exitConfirmNode = root;
+        fadeIn(panel, new Vec3(0, -20, 0), 0, 0.2);
+    }
+
+    /** 关闭退出确认框 */
+    private closeExitConfirm(): void {
+        if (this.exitConfirmNode) {
+            this.exitConfirmNode.destroy();
+            this.exitConfirmNode = null;
+        }
+    }
+
+    /** 对话框用居中文本标签 */
+    private createTextLabel(
+        parent: Node,
+        name: string,
+        text: string,
+        x: number,
+        y: number,
+        fontSize: number,
+        color: Color,
+    ): Label {
+        const n = new Node(name);
+        n.layer = this.node.parent!.layer;
+        n.setPosition(x, y, 0);
+        n.addComponent(UITransform).setContentSize(400, fontSize + 12);
+        const l = n.addComponent(Label);
+        l.string = text;
+        l.fontSize = fontSize;
+        l.color = color;
+        l.horizontalAlign = Label.HorizontalAlign.CENTER;
+        l.verticalAlign = Label.VerticalAlign.CENTER;
+        parent.addChild(n);
+        return l;
     }
 }
