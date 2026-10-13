@@ -16,8 +16,12 @@ import {
     geometry,
     MeshRenderer,
     DirectionalLight,
+    utils,
+    AttributeName,
+    UIOpacity,
 } from 'cc';
 import { fadeIn, fadeOutThen } from '../Common/UIAnim';
+import { paintTechButton, TechButtonKind, techTextColor, TechText } from '../Common/TechUI';
 
 const { ccclass } = _decorator;
 
@@ -31,6 +35,20 @@ const TARGET_MODEL_SIZE = 380;
 
 // 加载界面进度环半径
 const LOADING_RING_R = 40;
+
+// ===== 爆炸 / 碎裂特效参数 =====
+/** 单次特效最多生成的碎片数（防模型面数过多时卡顿） */
+const FX_MAX_SHARDS = 120;
+/** 碎片重力加速度（世界单位/秒²） */
+const FX_GRAVITY = 420;
+/** 爆裂模式：碎片初速度上限、生命周期（秒） */
+const FX_BURST_SPEED = 420;
+const FX_BURST_LIFE = 1.0;
+/** 碎裂模式：碎片初速度上限、生命周期（秒） */
+const FX_SHATTER_SPEED = 130;
+const FX_SHATTER_LIFE = 1.8;
+/** 中央闪光生命周期（秒） */
+const FX_FLASH_LIFE = 0.45;
 
 // 模型分类展示名（key 为 resources/Model 下的一级目录名）
 const CATEGORY_NAMES: Record<string, string> = {
@@ -57,6 +75,20 @@ export class Debug extends Component {
     private spinNode: Node | null = null;
     /** 装饰弧当前旋转角（度），由 update 逐帧累加 */
     private spinAngle = 0;
+    /** 特效模式：burst 爆裂（高速飞溅）/ shatter 碎裂（塌落解体） */
+    private fxMode: 'burst' | 'shatter' = 'burst';
+    /** 碎片容器节点（挂在 modelRoot 下，特效期间存在） */
+    private shardRoot: Node | null = null;
+    /** 活动碎片列表（位置/速度由 update 驱动） */
+    private shards: { node: Node; vel: Vec3; ang: Vec3; life: number; maxLife: number; baseScale: Vec3 }[] = [];
+    /** 爆裂中央闪光（圆环，由 update 驱动放大淡出） */
+    private fxFlash: { node: Node; life: number; maxLife: number } | null = null;
+    /** 特效是否播放中（播放中禁止再次触发/切换） */
+    private fxRunning = false;
+    /** 爆裂特效按钮（用于可用态刷新） */
+    private fxBurstBtn: Node | null = null;
+    /** 碎裂特效按钮（用于可用态刷新） */
+    private fxShatterBtn: Node | null = null;
 
     onLoad(): void {
         this.addLights();
@@ -64,6 +96,7 @@ export class Debug extends Component {
         this.createLoading();
         this.bindSceneUI();
         this.setupModelRoot();
+        this.createEffectBar();
         this.loadModels();
     }
 
@@ -73,7 +106,8 @@ export class Debug extends Component {
             this.spinAngle = (this.spinAngle + dt * 260) % 360;
             this.spinNode.setRotationFromEuler(0, 0, this.spinAngle);
         }
-        if (this.spin && this.currentModel) {
+        this.updateFx(dt);
+        if (this.spin && this.currentModel && this.currentModel.active) {
             this.currentModel.rotate(Quat.fromAxisAngle(new Quat(), Vec3.UP, dt * 0.6));
         }
     }
@@ -97,6 +131,60 @@ export class Debug extends Component {
         // 列表已按分类展示（各类自带标题），旧的固定标题改为通用文案
         const caption = canvas.getChildByName('ListCaption')?.getComponent(Label);
         if (caption) caption.string = '模型列表';
+    }
+
+    /**
+     * 创建特效按钮条（预览区下方）：爆裂 / 碎裂两个科技风按钮。
+     * 未选中模型或特效播放中时置灰（点击由 playFx 拦截）。
+     */
+    private createEffectBar(): void {
+        const bar = new Node('EffectBar');
+        bar.layer = UI_LAYER;
+        bar.addComponent(UITransform).setContentSize(360, 56);
+        bar.setPosition(430, -300, 0);
+        this.node.addChild(bar);
+
+        this.fxBurstBtn = this.createFxButton(bar, 'BtnBurst', '爆 裂', -90, 'burst');
+        this.fxShatterBtn = this.createFxButton(bar, 'BtnShatter', '碎 裂', 90, 'shatter');
+        this.refreshFxButtons();
+    }
+
+    /** 创建单个特效按钮（科技风背景 + 文字，返回按钮节点） */
+    private createFxButton(parent: Node, name: string, label: string, x: number, mode: 'burst' | 'shatter'): Node {
+        const w = 150;
+        const h = 52;
+        const btn = new Node(name);
+        btn.layer = UI_LAYER;
+        btn.setPosition(x, 0, 0);
+        btn.addComponent(UITransform).setContentSize(w, h);
+        paintTechButton(btn.addComponent(Graphics), w, h, 'danger');
+
+        const labNode = new Node('Label');
+        labNode.layer = UI_LAYER;
+        labNode.addComponent(UITransform).setContentSize(w, h);
+        const l = labNode.addComponent(Label);
+        l.string = label;
+        l.fontSize = 26;
+        l.color = techTextColor('danger');
+        l.horizontalAlign = Label.HorizontalAlign.CENTER;
+        l.verticalAlign = Label.VerticalAlign.CENTER;
+        btn.addChild(labNode);
+
+        btn.on(Node.EventType.TOUCH_END, () => this.playFx(mode), this);
+        return btn;
+    }
+
+    /** 刷新特效按钮可用态：已选中模型且特效未播放时正常，否则置灰 */
+    private refreshFxButtons(): void {
+        const usable = !!this.currentModel && !this.fxRunning;
+        const apply = (btn: Node | null): void => {
+            if (!btn) return;
+            let o = btn.getComponent(UIOpacity);
+            if (!o) o = btn.addComponent(UIOpacity);
+            o.opacity = usable ? 255 : 90;
+        };
+        apply(this.fxBurstBtn);
+        apply(this.fxShatterBtn);
     }
 
     /**
@@ -409,6 +497,8 @@ export class Debug extends Component {
 
     /** 显示选中的 3D 模型 */
     private displayModel(prefab: Prefab): void {
+        // 切换模型前先复位特效（清理碎片/闪光，恢复模型可见性）
+        this.resetFx();
         this.clearModel();
         const model = instantiate(prefab);
         this.modelRoot!.addChild(model);
@@ -421,6 +511,7 @@ export class Debug extends Component {
             this.spin = true;
         }, 0);
         this.setStatus('已加载模型: ' + (prefab.name || 'unknown'));
+        this.refreshFxButtons();
     }
 
     private clearModel(): void {
@@ -471,5 +562,271 @@ export class Debug extends Component {
         const localCenter = this.modelRoot!.inverseTransformPoint(new Vec3(), center);
         model.setScale(scale, scale, scale);
         model.setPosition(-localCenter.x * scale, -localCenter.y * scale, -localCenter.z * scale);
+    }
+
+    // ================= 爆炸 / 碎裂特效 =================
+
+    /**
+     * 播放特效：把当前模型的网格按三角形分组碎裂成独立碎片，
+     * 隐藏原模型，碎片按模式（爆裂高速飞溅 / 碎裂塌落解体）运动，
+     * 播放完毕后恢复原模型。播放中/未选中模型时忽略点击。
+     */
+    private playFx(mode: 'burst' | 'shatter'): void {
+        if (this.fxRunning) {
+            this.setStatus('特效播放中，请稍候…');
+            return;
+        }
+        const model = this.currentModel;
+        if (!model || !this.modelRoot) {
+            this.setStatus('请先在左侧选择一个模型');
+            return;
+        }
+
+        this.resetFx();
+        this.fxMode = mode;
+
+        // 碎片容器：直接挂 modelRoot（无附加变换），碎片用渲染节点的世界矩阵定位
+        const shardRoot = new Node('ShardRoot');
+        shardRoot.layer = MODEL_LAYER;
+        this.modelRoot.addChild(shardRoot);
+        this.shardRoot = shardRoot;
+
+        // 遍历所有 MeshRenderer 提取碎片
+        const renderers = model.getComponentsInChildren(MeshRenderer);
+        let shardTotal = 0;
+        for (const r of renderers) {
+            shardTotal += this.extractShards(r, mode, shardRoot, shardTotal);
+        }
+        if (this.shards.length === 0) {
+            shardRoot.destroy();
+            this.shardRoot = null;
+            this.setStatus('当前模型没有可碎裂的网格数据');
+            return;
+        }
+
+        // 隐藏原模型，碎片接管展示
+        model.active = false;
+
+        // 爆裂模式：中央闪光冲击波
+        if (mode === 'burst') this.createFlash();
+
+        this.fxRunning = true;
+        this.refreshFxButtons();
+        this.setStatus(mode === 'burst'
+            ? `爆裂！模型裂成 ${this.shards.length} 块飞溅而出`
+            : `碎裂！模型裂成 ${this.shards.length} 块塌落解体`);
+    }
+
+    /**
+     * 从单个 MeshRenderer 提取三角形碎片：读取网格顶点/索引，按每组 2~3 个三角形
+     * （总量受 FX_MAX_SHARDS 限制）拆成多个小 Mesh，各自挂节点用渲染节点世界矩阵定位，
+     * 并按模式赋予初速度与角速度。返回本次生成的碎片数。
+     */
+    private extractShards(renderer: MeshRenderer, mode: 'burst' | 'shatter', shardRoot: Node, madeBefore: number): number {
+        const mesh = renderer.mesh;
+        if (!mesh) return 0;
+        const mat = renderer.getMaterialInstance(0) ?? renderer.material;
+        const subCount = mesh.renderingSubMeshes.length;
+        let made = 0;
+
+        for (let s = 0; s < subCount; s++) {
+            const positions = mesh.readAttribute(s, AttributeName.ATTR_POSITION) as Float32Array | null;
+            const normals = mesh.readAttribute(s, AttributeName.ATTR_NORMAL) as Float32Array | null;
+            const uvs = mesh.readAttribute(s, AttributeName.ATTR_TEX_COORD) as Float32Array | null;
+            const indices = mesh.readIndices(s);
+            if (!positions || !indices) continue;
+
+            const triCount = Math.floor(indices.length / 3);
+            if (triCount <= 0) continue;
+
+            // 分组大小：总量不超过 FX_MAX_SHARDS（含之前渲染器已生成的）
+            const remain = FX_MAX_SHARDS - (madeBefore + made);
+            if (remain <= 0) break;
+            const perGroup = Math.max(1, Math.ceil(triCount / remain));
+
+            // 三角形顺序确定性打乱，让相邻面随机落入不同碎片
+            const order: number[] = [];
+            for (let t = 0; t < triCount; t++) order.push(t);
+            for (let t = triCount - 1; t > 0; t--) {
+                const j = (t * 7919 + s * 104729 + made * 31) % (t + 1);
+                const tmp = order[t];
+                order[t] = order[j];
+                order[j] = tmp;
+            }
+
+            for (let start = 0; start < triCount; start += perGroup) {
+                if (madeBefore + made >= FX_MAX_SHARDS) break;
+                const tris = order.slice(start, Math.min(start + perGroup, triCount));
+                if (tris.length === 0) continue;
+
+                // 收集该组三角形用到的顶点（去重），记录新索引
+                const vMap = new Map<number, number>();
+                const newPos: number[] = [];
+                const newNor: number[] = [];
+                const newUv: number[] = [];
+                const newIdx: number[] = [];
+                for (const t of tris) {
+                    for (let k = 0; k < 3; k++) {
+                        const src = indices[t * 3 + k];
+                        let dst = vMap.get(src);
+                        if (dst === undefined) {
+                            dst = newPos.length / 3;
+                            vMap.set(src, dst);
+                            newPos.push(positions[src * 3], positions[src * 3 + 1], positions[src * 3 + 2]);
+                            if (normals) newNor.push(normals[src * 3], normals[src * 3 + 1], normals[src * 3 + 2]);
+                            if (uvs) newUv.push(uvs[src * 2], uvs[src * 2 + 1]);
+                        }
+                        newIdx.push(dst);
+                    }
+                }
+
+                // 碎片局部中心不再单独计算：方向基准直接用碎片节点本地坐标（见下）
+
+                const m = utils.createMesh({
+                    positions: newPos,
+                    normals: newNor.length > 0 ? newNor : undefined,
+                    uvs: newUv.length > 0 ? newUv : undefined,
+                    indices: new Uint16Array(newIdx),
+                });
+                const n = new Node('Shard');
+                n.layer = MODEL_LAYER;
+                // 必须先入树再设世界矩阵（setter 会按父变换换算成本地矩阵），
+                // 顶点是渲染节点局部坐标，复制其世界矩阵即可原位呈现
+                shardRoot.addChild(n);
+                n.matrix = renderer.node.worldMatrix;
+                // 记录初始缩放（世界矩阵换算而来），尾部缩放在此基础上叠加
+                const baseScale = new Vec3(n.scale.x, n.scale.y, n.scale.z);
+                const mr = n.addComponent(MeshRenderer);
+                mr.mesh = m;
+                if (mat) mr.material = mat;
+
+                // 方向：碎片本地坐标相对 modelRoot 原点（shardRoot 无附加变换，本地即模型空间）
+                const dir = new Vec3(n.position.x, n.position.y, n.position.z);
+                if (dir.lengthSqr() < 1e-4) dir.set(Math.random() - 0.5, Math.random(), Math.random() - 0.5);
+                dir.normalize();
+
+                // 初速度与角速度
+                const vel = new Vec3();
+                const ang = new Vec3();
+                const maxLife = mode === 'burst' ? FX_BURST_LIFE : FX_SHATTER_LIFE;
+                if (mode === 'burst') {
+                    // 爆裂：高速飞溅 + 上扬 + 大随机扰动
+                    const speed = FX_BURST_SPEED * (0.55 + Math.random() * 0.75);
+                    vel.set(dir.x * speed, dir.y * speed * 0.7 + 160 * Math.random(), dir.z * speed);
+                    vel.x += (Math.random() - 0.5) * 160;
+                    vel.z += (Math.random() - 0.5) * 160;
+                    ang.set((Math.random() - 0.5) * 720, (Math.random() - 0.5) * 720, (Math.random() - 0.5) * 720);
+                } else {
+                    // 碎裂：低速塌落 + 打滚
+                    const speed = FX_SHATTER_SPEED * (0.4 + Math.random() * 0.8);
+                    vel.set(dir.x * speed + (Math.random() - 0.5) * 60, dir.y * speed * 0.5 + 40, dir.z * speed + (Math.random() - 0.5) * 60);
+                    ang.set((Math.random() - 0.5) * 260, (Math.random() - 0.5) * 260, (Math.random() - 0.5) * 260);
+                }
+                this.shards.push({ node: n, vel, ang, life: 0, maxLife, baseScale });
+                made++;
+            }
+        }
+        return made;
+    }
+
+    /** 爆裂中央闪光：圆环快速放大并淡出（update 驱动） */
+    private createFlash(): void {
+        const root = this.modelRoot;
+        if (!root) return;
+        const n = new Node('FxFlash');
+        n.layer = MODEL_LAYER;
+        // 定位到 modelRoot 原点（fitModel 已将模型几何中心置于此处）
+        n.setPosition(0, 0, 0);
+        n.addComponent(UITransform).setContentSize(10, 10);
+        const g = n.addComponent(Graphics);
+        root.addChild(n);
+        this.fxFlash = { node: n, life: 0, maxLife: FX_FLASH_LIFE };
+        // 立即画一帧（后续由 updateFx 重绘放大淡出）
+        this.drawFlash(g, 0);
+    }
+
+    /** 绘制闪光圆环：t∈[0,1] 由小变大、由亮变暗 */
+    private drawFlash(g: Graphics, t: number): void {
+        const r = 20 + t * 260;
+        g.clear();
+        g.fillColor = new Color(255, 240, 200, Math.round(230 * (1 - t)));
+        g.arc(0, 0, r * 0.55, 0, Math.PI * 2);
+        g.fill();
+        g.strokeColor = new Color(255, 220, 150, Math.round(255 * (1 - t)));
+        g.lineWidth = Math.max(1, 8 * (1 - t));
+        g.arc(0, 0, r, 0, Math.PI * 2);
+        g.stroke();
+    }
+
+    /** 特效逐帧驱动：碎片运动 + 尾部缩小 + 闪光扩散 + 结束恢复 */
+    private updateFx(dt: number): void {
+        // 闪光扩散（即使碎片已全部消亡也要走完）
+        if (this.fxFlash) {
+            const f = this.fxFlash;
+            f.life += dt;
+            const t = f.life / f.maxLife;
+            if (t >= 1) {
+                f.node.destroy();
+                this.fxFlash = null;
+            } else {
+                this.drawFlash(f.node.getComponent(Graphics)!, t);
+            }
+        }
+
+        if (!this.fxRunning) return;
+        for (const sh of this.shards) {
+            sh.life += dt;
+            if (sh.life >= sh.maxLife) {
+                sh.node.destroy();
+                continue;
+            }
+            // 重力 + 位移（shardRoot 无附加变换，本地速度即世界速度）
+            sh.vel.y -= FX_GRAVITY * dt;
+            const p = sh.node.position;
+            sh.node.setPosition(p.x + sh.vel.x * dt, p.y + sh.vel.y * dt, p.z + sh.vel.z * dt);
+            const e = sh.node.eulerAngles;
+            sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
+            // 尾部 30% 生命周期开始缩小消失（在初始缩放基础上叠加）
+            const k = sh.life / sh.maxLife;
+            if (k > 0.7) {
+                const s = 1 - (k - 0.7) / 0.3;
+                sh.node.setScale(sh.baseScale.x * s, sh.baseScale.y * s, sh.baseScale.z * s);
+            }
+        }
+        this.shards = this.shards.filter((sh) => sh.life < sh.maxLife);
+
+        if (this.shards.length === 0 && !this.fxFlash) {
+            this.finishFx();
+        }
+    }
+
+    /** 特效自然结束：恢复原模型可见，清理容器 */
+    private finishFx(): void {
+        this.fxRunning = false;
+        if (this.shardRoot) {
+            this.shardRoot.destroy();
+            this.shardRoot = null;
+        }
+        this.shards = [];
+        if (this.currentModel) this.currentModel.active = true;
+        this.refreshFxButtons();
+        this.setStatus('特效播放完毕，可再次点击或切换模型');
+    }
+
+    /** 立即复位特效（切换模型/退出场景前调用）：清理碎片与闪光，恢复模型可见 */
+    private resetFx(): void {
+        this.fxRunning = false;
+        for (const sh of this.shards) sh.node.destroy();
+        this.shards = [];
+        if (this.shardRoot) {
+            this.shardRoot.destroy();
+            this.shardRoot = null;
+        }
+        if (this.fxFlash) {
+            this.fxFlash.node.destroy();
+            this.fxFlash = null;
+        }
+        if (this.currentModel) this.currentModel.active = true;
+        this.refreshFxButtons();
     }
 }
