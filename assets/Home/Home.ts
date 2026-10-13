@@ -26,7 +26,7 @@ export class Home extends Component {
             director.loadScene('Login');
             return;
         }
-        this.simplifyMenuButtons();
+        this.restyleMenuButtons();
         this.playEnterAnim();
         this.createMusicToggle();
         this.bindLoginEntry();
@@ -198,53 +198,67 @@ export class Home extends Component {
     }
 
     /**
-     * 将场景自带的默认按钮统一简化为纯文字菜单项：
-     * 去掉背景 Sprite 与 Button 组件，只保留 Label 文字，鼠标悬停/按下时提亮。
-     * 注意：引擎限制一个节点只能有一个可渲染 UI 组件（uiComp），场景按钮的 Sprite
-     * 占用该位置后再添加 Graphics 会被拒绝（warnID 12002）导致背景画不出来，
-     * 因此这里不替换背景，直接采用纯文字方案。
+     * 将场景自带的默认按钮（Sprite+Button）替换为科技风外观：
+     * 深色圆角底 + 霓虹描边，文字悬停/按下提亮，保留点击与按压反馈。
      */
-    private simplifyMenuButtons(): void {
+    private restyleMenuButtons(): void {
         const canvas = this.node.parent;
         const panel = canvas?.getChildByName('MenuPanel');
-        const targets: { node: Node | null | undefined; kind: TechButtonKind; onClick: () => void }[] = [
+        const targets: { node: Node | null | undefined; kind: TechButtonKind; onClick?: () => void }[] = [
             // 进入游戏：当前唯一的游戏世界场景为 Debug
             { node: panel?.getChildByName('BtnStart'), kind: 'primary', onClick: () => this.switchScene('Debug') },
             { node: panel?.getChildByName('BtnSettings'), kind: 'primary', onClick: () => this.onSettingsClick() },
             { node: panel?.getChildByName('BtnExit'), kind: 'danger', onClick: () => this.openExitConfirm() },
-            { node: canvas?.getChildByName('BtnDebug'), kind: 'ghost', onClick: () => this.onDebugClick() },
+            // BtnDebug 的点击由场景中 Button 的 clickEvents 绑定（onDebugClick），此处只补样式与悬停
+            { node: canvas?.getChildByName('BtnDebug'), kind: 'ghost' },
         ];
         targets.forEach((t) => {
-            if (t.node) this.simplifySceneButton(t.node, t.kind, t.onClick);
+            if (t.node) this.restyleSceneButton(t.node, t.kind, t.onClick);
         });
     }
 
     /**
-     * 去掉场景默认按钮的 Sprite 背景与 Button 组件，保留文字标签：
-     * 默认暗色，鼠标悬停/按下提亮，点击触发回调（含按压缩放反馈）。
+     * 去掉默认 Sprite，改绘科技风按钮背景，并提亮文字。
+     * 注意：引擎限制一个节点只能有一个可渲染 UI 组件（uiComp），场景按钮自带的 Sprite
+     * 占用该位置后，同节点再添加 Graphics 会被引擎拒绝（warnID 12002）导致背景画不出来；
+     * 因此背景 Graphics 挂在独立子节点 TechBg 上（置于 Label 之下），彻底规避该限制。
      */
-    private simplifySceneButton(btn: Node, kind: TechButtonKind, onClick: () => void): void {
+    private restyleSceneButton(btn: Node, kind: TechButtonKind, onClick?: () => void): void {
+        const ut = btn.getComponent(UITransform);
+        const w = ut ? ut.contentSize.width : 220;
+        const h = ut ? ut.contentSize.height : 64;
         const sprite = btn.getComponent(Sprite);
         if (sprite) sprite.destroy();
+        // Button 组件保留（热区与场景点击绑定），仅关闭过渡效果（Sprite 已移除）
         const button = btn.getComponent(Button);
-        if (button) button.destroy();
+        if (button) button.transition = Button.Transition.NONE;
 
-        const label = btn.getChildByName('Label')?.getComponent(Label) ?? null;
-        const normal = TechText.dim;
+        // 科技风背景：独立子节点承载 Graphics，避开 uiComp 单组件限制；置于 Label 之下
+        let bg = btn.getChildByName('TechBg');
+        if (!bg) {
+            bg = new Node('TechBg');
+            bg.layer = btn.layer;
+            bg.addComponent(UITransform).setContentSize(w, h);
+            btn.insertChild(bg, 0);
+        }
+        paintTechButton(bg.getComponent(Graphics) ?? bg.addComponent(Graphics), w, h, kind);
+
+        // 文字：默认暗色，鼠标悬停/按下提亮，移出/抬起恢复
+        const label = btn.getChildByName('Label')?.getComponent(Label);
+        if (label) {
+            label.color = TechText.dim;
+            label.fontSize = Math.max(22, Math.min(28, Math.round(h * 0.42)));
+        }
         const active = techTextColor(kind);
         const setColor = (c: Color): void => {
             if (label) label.color = c;
         };
-        setColor(normal);
-
-        // 鼠标悬停提亮、移出恢复
         btn.on(Node.EventType.MOUSE_ENTER, () => setColor(active), this);
-        btn.on(Node.EventType.MOUSE_LEAVE, () => setColor(normal), this);
-        // 触屏：按下提亮、抬起/取消恢复
+        btn.on(Node.EventType.MOUSE_LEAVE, () => setColor(TechText.dim), this);
         btn.on(Node.EventType.TOUCH_START, () => setColor(active), this);
-        btn.on(Node.EventType.TOUCH_CANCEL, () => setColor(normal), this);
-        btn.on(Node.EventType.TOUCH_END, () => setColor(normal), this);
-        btn.on(Node.EventType.TOUCH_END, onClick, this);
+        btn.on(Node.EventType.TOUCH_CANCEL, () => setColor(TechText.dim), this);
+        btn.on(Node.EventType.TOUCH_END, () => setColor(TechText.dim), this);
+        if (onClick) btn.on(Node.EventType.TOUCH_END, onClick, this);
         pressEffect(btn);
     }
 
