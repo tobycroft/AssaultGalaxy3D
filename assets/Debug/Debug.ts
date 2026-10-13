@@ -126,8 +126,7 @@ export class Debug extends Component {
         // 外圈旋转装饰弧（两段错位弧线，持续旋转表示“进行中”）
         const spin = new Node('Spin');
         spin.layer = layer;
-        const spinUt = spin.addComponent(UITransform);
-        spinUt.setContentSize(120, 120);
+        spin.addComponent(UITransform).setContentSize(120, 120);
         const sg = spin.addComponent(Graphics);
         const R = LOADING_RING_R;
         sg.strokeColor = new Color(0, 214, 255, 120);
@@ -140,10 +139,10 @@ export class Debug extends Component {
         ring.addChild(spin);
         // 注意：3.x 的 Node/UITransform 均无 angle 属性，若直接 tween { angle } 目标属性
         // 不存在会导致 tween-action 内部 keys 为 null 而崩溃；故 tween 普通状态对象，
-        // 每帧通过 setRotationFromEuler 回填旋转角实现持续旋转
+        // 每帧通过 Node.setRotationFromEuler 回填旋转角实现持续旋转
         const spinState = { angle: 0 };
         tween(spinState).by(1.4, { angle: 360 }, {
-            onUpdate: (): void => spinUt.setRotationFromEuler(0, 0, spinState.angle),
+            onUpdate: (): void => spin.setRotationFromEuler(0, 0, spinState.angle),
         }).repeatForever().start();
 
         // 进度文字
