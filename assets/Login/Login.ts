@@ -1,10 +1,12 @@
-import { ccclass, Color, Component, director, EditBox, Graphics, Label, Node, UITransform, Vec3 } from 'cc';
+import { _decorator, Color, Component, director, EditBox, Graphics, Label, Node, UITransform, Vec3 } from 'cc';
 import { fadeIn, pressEffect } from '../Common/UIAnim';
 import { login, register, AuthUser } from '../Common/Api';
 import { Session } from '../Common/Session';
 
 /** 认证模式：登录 / 注册 */
 type AuthMode = 'login' | 'register';
+
+const { ccclass } = _decorator;
 
 /** UI 层 bitmask，与项目 Settings.ts 保持一致 */
 const UI_LAYER = 33554432;
