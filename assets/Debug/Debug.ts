@@ -24,6 +24,12 @@ import {
     SphereLight,
     assetManager,
     Texture2D,
+    ParticleSystem2D,
+    Vec2,
+    Camera,
+    SpriteFrame,
+    Rect,
+    Material,
     tween,
 } from 'cc';
 import { fadeIn, fadeOutThen } from '../Common/UIAnim';
@@ -111,7 +117,7 @@ const FX_VERBS: Record<FxMode, string> = {
 
 // ===== 引擎特效演示参数 =====
 /** 引擎特效演示类型（底部第二排按钮，点击后在预览区播放） */
-type EngineFxKind = 'easing' | 'trail' | 'spotlight' | 'pulse' | 'shockwave';
+type EngineFxKind = 'easing' | 'trail' | 'spotlight' | 'pulse' | 'shockwave' | 'particle' | 'shadow' | 'shake';
 /** 引擎特效演示按钮定义 */
 const ENGINE_FX_BUTTONS: { name: string; label: string; kind: EngineFxKind }[] = [
     { name: 'BtnFxEasing', label: '缓动', kind: 'easing' },
@@ -119,6 +125,9 @@ const ENGINE_FX_BUTTONS: { name: string; label: string; kind: EngineFxKind }[] =
     { name: 'BtnFxSpotlight', label: '探照灯', kind: 'spotlight' },
     { name: 'BtnFxPulse', label: '脉冲光', kind: 'pulse' },
     { name: 'BtnFxShockwave', label: '冲击波', kind: 'shockwave' },
+    { name: 'BtnFxParticle', label: '粒子', kind: 'particle' },
+    { name: 'BtnFxShadow', label: '阴影', kind: 'shadow' },
+    { name: 'BtnFxShake', label: '震屏', kind: 'shake' },
 ];
 /** 引擎特效状态文案（体现引擎实现方式） */
 const ENGINE_FX_LABELS: Record<EngineFxKind, string> = {
@@ -127,6 +136,9 @@ const ENGINE_FX_LABELS: Record<EngineFxKind, string> = {
     spotlight: 'SpotLight 探照灯',
     pulse: 'SphereLight 脉冲光',
     shockwave: 'Graphics 冲击波',
+    particle: 'ParticleSystem 2D 粒子',
+    shadow: 'DirectionalLight 实时阴影',
+    shake: 'Camera 相机震屏',
 };
 /** 缓动赛道演示的 tween 缓动函数列表（引擎内置 easing） */
 const FX_EASING_LIST: { label: string; easing: string }[] = [
@@ -144,6 +156,9 @@ const ENGINE_FX_DURATION: Record<EngineFxKind, number> = {
     spotlight: 3.6,
     pulse: 3.2,
     shockwave: 1.2,
+    particle: 2.6,
+    shadow: 3.6,
+    shake: 1.2,
 };
 /** 探照灯/脉冲光的亮度（前向管线每帧仅 1 盏灯生效，播放期间需隐藏主光；实测 luminousFlux 换算后过暗，直接设 luminance） */
 const LIGHT_LUMINANCE = 400000;
@@ -197,6 +212,14 @@ export class Debug extends Component {
     private hiddenTopLight: Node | null = null;
     /** 冲击波圆环列表（update 驱动扩散） */
     private shockRings: { g: Graphics; life: number; delay: number }[] = [];
+    /** 阴影演示用的地面（接收实时阴影），结束销毁 */
+    private shadowGround: Node | null = null;
+    /** 阴影演示期间因 castShadow 被改的模型渲染器，结束恢复 */
+    private shadowCasters: MeshRenderer[] = [];
+    /** 震屏相机引用 */
+    private shakeCamera: Camera | null = null;
+    /** 震屏相机初始位置（结束恢复） */
+    private shakeOrigin: Vec3 | null = null;
 
     onLoad(): void {
         this.addLights();
@@ -247,11 +270,15 @@ export class Debug extends Component {
      */
     /**
      * 创建特效按钮栏（预览区下方两排）：
-     * 第一排 7 个解体特效，第二排 5 个引擎特效演示，均为等宽按钮。
+     * 第一排 7 个解体特效，第二排 8 个引擎特效演示，均为等宽按钮。
      */
     private createEffectBar(): void {
         const n = FX_BUTTONS.length;
-        const totalW = n * FX_BTN_W + (n - 1) * FX_BTN_GAP;
+        const m = ENGINE_FX_BUTTONS.length;
+        // 每排按自身按钮数居中布局，容器取两排较宽者
+        const w1 = n * FX_BTN_W + (n - 1) * FX_BTN_GAP;
+        const w2 = m * FX_BTN_W + (m - 1) * FX_BTN_GAP;
+        const totalW = Math.max(w1, w2);
         const bar = new Node('EffectBar');
         bar.layer = UI_LAYER;
         bar.addComponent(UITransform).setContentSize(totalW, FX_BTN_H * 2 + 10);
@@ -260,13 +287,12 @@ export class Debug extends Component {
 
         // 第一排：解体特效
         FX_BUTTONS.forEach((def, i) => {
-            const x = -totalW / 2 + FX_BTN_W / 2 + i * (FX_BTN_W + FX_BTN_GAP);
+            const x = -w1 / 2 + FX_BTN_W / 2 + i * (FX_BTN_W + FX_BTN_GAP);
             this.fxButtons.push(this.createFxButton(bar, def.name, def.label, x, FX_BTN_H / 2 + 5, () => this.playFx(def.mode)));
         });
-        // 第二排：引擎特效演示（同宽均布）
-        const m = ENGINE_FX_BUTTONS.length;
+        // 第二排：引擎特效演示（各按自身宽度居中均布）
         ENGINE_FX_BUTTONS.forEach((def, i) => {
-            const x = -totalW / 2 + (i + 0.5) * (totalW / m);
+            const x = -w2 / 2 + FX_BTN_W / 2 + i * (FX_BTN_W + FX_BTN_GAP);
             this.fxButtons.push(this.createFxButton(bar, def.name, def.label, x, -FX_BTN_H / 2 - 5, () => this.playEngineFx(def.kind)));
         });
         this.refreshFxButtons();
@@ -743,7 +769,8 @@ export class Debug extends Component {
 
     /**
      * 播放引擎特效演示：在预览区展示各类 Cocos 引擎特效的实现效果
-     * （Tween 缓动 / MotionStreak 拖尾 / SpotLight 探照灯 / SphereLight 脉冲光 / Graphics 冲击波）。
+     * （Tween 缓动 / MotionStreak 拖尾 / SpotLight 探照灯 / SphereLight 脉冲光 /
+     *  Graphics 冲击波 / ParticleSystem 粒子 / DirectionalLight 实时阴影 / Camera 震屏）。
      * 与解体特效互斥（共用 fxRunning），播放中/未选中模型时忽略点击。
      */
     private playEngineFx(kind: EngineFxKind): void {
@@ -769,6 +796,9 @@ export class Debug extends Component {
             case 'spotlight': this.fxSpotlightSweep(); break;
             case 'pulse': this.fxPulseLight(); break;
             case 'shockwave': this.fxShockwaveRings(); break;
+            case 'particle': this.fxParticleBurst(); break;
+            case 'shadow': this.fxShadow(); break;
+            case 'shake': this.fxCameraShake(); break;
         }
 
         this.fxRunning = true;
@@ -926,6 +956,99 @@ export class Debug extends Component {
         g.stroke();
     }
 
+    /**
+     * ParticleSystem2D 粒子：用内置 default_sprite 纹理发射一团向上喷溅的火花粒子，
+     * 通过 classic 属性（emissionRate/life/speed/gravity/startColor 等）配置发射器。
+     * 注意：ParticleSystem2D 没有 play()，用 resetSystem() 启动发射；纹理经异步加载后注入。
+     */
+    private fxParticleBurst(): void {
+        const n = new Node('FxParticle');
+        n.layer = UI_LAYER;
+        n.setPosition(0, 0, 0);
+        n.addComponent(UITransform).setContentSize(10, 10);
+        const ps = n.addComponent(ParticleSystem2D);
+        ps.custom = true;
+        ps.playOnLoad = false;
+        ps.totalParticles = 150;
+        ps.duration = -1;                      // 持续发射
+        ps.life = 1.0; ps.lifeVar = 0.5;
+        ps.startSize = 26; ps.startSizeVar = 12;
+        ps.speed = 260; ps.speedVar = 90;
+        ps.angle = 90; ps.angleVar = 180;      // 以向上的 90° 为中心、±180° 扩散
+        ps.gravity = new Vec2(0, -240);        // 重力（math.Vec2）
+        ps.emissionRate = 150;
+        ps.positionType = 0;                   // FREE：粒子脱离发射器独立运动
+        ps.startColor = new Color(255, 224, 130, 255);
+        ps.startColorVar = new Color(40, 30, 0, 0);
+        ps.endColor = new Color(255, 90, 0, 0);
+        ps.endColorVar = new Color(0, 0, 0, 0);
+        // 模型根被 fitModel 缩放/偏移，挂到 modelRoot 让粒子从模型中心迸发并随模型缩放
+        if (this.modelRoot) this.modelRoot.addChild(n);
+        else this.node.addChild(n);
+        this.fxNodes.push(n);
+        // 内置白色纹理：default_sprite 的 ImageAsset 包成 Texture2D 再包 SpriteFrame
+        assetManager.loadAny({ uuid: '20835ba4-6145-4fbc-a58a-051ce700aa3e' }, (err, img) => {
+            if (err || !img || !n.isValid) return;
+            const tex = new Texture2D();
+            tex.image = img;
+            const sf = new SpriteFrame();
+            sf.texture = tex;
+            sf.rect = new Rect(0, 0, tex.width, tex.height);
+            sf.packable = false;
+            ps.spriteFrame = sf;
+            ps.resetSystem();                  // 注入纹理后启动发射
+        });
+    }
+
+    /**
+     * DirectionalLight 实时阴影：开启主平行光阴影，模型开启 castShadow，
+     * 并在模型后方放一块竖直接收面（MeshRenderer + receiveShadow）承接投影。
+     */
+    private fxShadow(): void {
+        const root = this.node.parent;
+        if (!root) return;
+        const topLight = root.getChildByName('TopLight');
+        const dl = topLight?.getComponent(DirectionalLight);
+        if (dl) {
+            dl.shadowEnabled = true;
+            dl.shadowDistance = 2000;
+            dl.shadowBias = 1;
+            dl.shadowNormalBias = 0.5;
+        }
+        // 模型投射阴影
+        if (this.currentModel) {
+            const mrs = this.currentModel.getComponentsInChildren(MeshRenderer);
+            mrs.forEach((mr) => { mr.castShadow = true; this.shadowCasters.push(mr); });
+        }
+        // 接收面：竖直平面（法线 +Z）置于模型后方略低处，承接主光投影
+        const ground = new Node('ShadowGround');
+        ground.layer = MODEL_LAYER;
+        const mw = this.modelRoot ? this.modelRoot.worldPosition : new Vec3(0, 0, -50);
+        ground.setPosition(mw.x, mw.y - 250, mw.z - 55);
+        ground.addComponent(UITransform).setContentSize(900, 520);
+        const gr = ground.addComponent(MeshRenderer);
+        gr.mesh = utils.createMesh({
+            positions: [-450, -260, 0, 450, -260, 0, 450, 260, 0, -450, 260, 0],
+            normals: [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
+            uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+            indices: [0, 1, 2, 0, 2, 3],
+        });
+        const mat = new Material();
+        mat.initialize({ effectName: 'builtin-standard' });
+        gr.material = mat;
+        gr.receiveShadow = true;
+        root.addChild(ground);
+        this.shadowGround = ground;
+    }
+
+    /** Camera 震屏：记录主相机初始位置，由 updateEngineFx 每帧抖动并按时间衰减 */
+    private fxCameraShake(): void {
+        const cam = director.mainCamera;
+        if (!cam) return;
+        this.shakeCamera = cam;
+        this.shakeOrigin = cam.node.position.clone();
+    }
+
     /** 引擎特效逐帧驱动（与解体特效的分支互斥） */
     private updateEngineFx(dt: number): void {
         this.fxTimer += dt;
@@ -965,6 +1088,20 @@ export class Debug extends Component {
                 }
                 break;
             }
+            case 'shake': {
+                // 主相机按时间衰减地随机抖动（粒子/阴影为自驱，无需逐帧逻辑）
+                const cam = this.shakeCamera;
+                if (cam && this.shakeOrigin) {
+                    const decay = Math.max(0, 1 - t / ENGINE_FX_DURATION.shake);
+                    const amp = 16 * decay;
+                    cam.node.setPosition(
+                        this.shakeOrigin.x + (Math.random() * 2 - 1) * amp,
+                        this.shakeOrigin.y + (Math.random() * 2 - 1) * amp,
+                        this.shakeOrigin.z,
+                    );
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -981,6 +1118,23 @@ export class Debug extends Component {
         if (this.hiddenTopLight) {
             this.hiddenTopLight.active = true;
             this.hiddenTopLight = null;
+        }
+        // 关闭实时阴影并恢复投射器
+        if (this.shadowGround) {
+            this.shadowGround.destroy();
+            this.shadowGround = null;
+        }
+        if (this.shadowCasters.length > 0) {
+            this.shadowCasters.forEach((mr) => { mr.castShadow = false; });
+            this.shadowCasters = [];
+        }
+        const dl = this.node.parent?.getChildByName('TopLight')?.getComponent(DirectionalLight);
+        if (dl) dl.shadowEnabled = false;
+        // 恢复相机位置
+        if (this.shakeCamera && this.shakeOrigin) {
+            this.shakeCamera.node.setPosition(this.shakeOrigin);
+            this.shakeCamera = null;
+            this.shakeOrigin = null;
         }
     }
 
