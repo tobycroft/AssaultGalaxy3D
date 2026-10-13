@@ -23,7 +23,7 @@ import {
     SpotLight,
     SphereLight,
     assetManager,
-    SpriteFrame,
+    Texture2D,
     tween,
 } from 'cc';
 import { fadeIn, fadeOutThen } from '../Common/UIAnim';
@@ -145,8 +145,8 @@ const ENGINE_FX_DURATION: Record<EngineFxKind, number> = {
     pulse: 3.2,
     shockwave: 1.2,
 };
-/** 探照灯/脉冲光的光通量（前向管线每帧仅 1 盏灯生效，播放期间需隐藏主光） */
-const LIGHT_LUMINOUS_FLUX = 16000;
+/** 探照灯/脉冲光的亮度（前向管线每帧仅 1 盏灯生效，播放期间需隐藏主光；实测 luminousFlux 换算后过暗，直接设 luminance） */
+const LIGHT_LUMINANCE = 400000;
 
 // 模型分类展示名（key 为 resources/Model 下的一级目录名）
 const CATEGORY_NAMES: Record<string, string> = {
@@ -815,9 +815,24 @@ export class Debug extends Component {
 
     /**
      * MotionStreak 拖尾：飞球沿椭圆轨迹绕行，引擎拖尾组件自动生成渐隐尾迹。
-     * 纹理用内置白色图（加载失败时退化为普通圆点飞行，仍有轨迹节点）。
+     * 注意：MotionStreak 是 UIRenderable 组件，与 Graphics 同节点会因 uiComp 单组件限制
+     * 无法渲染，故拖尾条带与飞球圆点分为两个节点同步移动。
+     * 纹理用内置 default_sprite 的 ImageAsset 包装成 Texture2D（preview 下内置路径直载会 404）。
      */
     private fxTrailBall(): void {
+        // 拖尾条带节点
+        const streakNode = new Node('TrailStreak');
+        streakNode.layer = UI_LAYER;
+        streakNode.setPosition(0, 0, 0);
+        streakNode.addComponent(UITransform).setContentSize(40, 40);
+        const streak = streakNode.addComponent(MotionStreak);
+        streak.fadeTime = 0.5;
+        streak.minSeg = 2;
+        streak.stroke = 24;
+        this.node.addChild(streakNode);
+        this.fxNodes.push(streakNode);
+
+        // 飞球本体（Graphics 圆点）
         const ball = new Node('TrailBall');
         ball.layer = UI_LAYER;
         ball.setPosition(0, 0, 0);
@@ -826,15 +841,15 @@ export class Debug extends Component {
         bg.fillColor = new Color(255, 240, 200, 255);
         bg.arc(0, 0, 10, 0, Math.PI * 2);
         bg.fill();
-        const streak = ball.addComponent(MotionStreak);
-        streak.fadeTime = 0.5;
-        streak.minSeg = 2;
-        streak.stroke = 24;
         this.node.addChild(ball);
         this.fxNodes.push(ball);
 
-        assetManager.loadAny('__default_sprite__/default_sprite', SpriteFrame, (err, sf) => {
-            if (!err && sf) streak.texture = (sf as SpriteFrame).texture;
+        // 内置白色纹理：default_sprite 的 ImageAsset（uuid 为引擎内置资源）包成 Texture2D
+        assetManager.loadAny({ uuid: '20835ba4-6145-4fbc-a58a-051ce700aa3e' }, (err, img) => {
+            if (err || !img) return;
+            const tex = new Texture2D();
+            tex.image = img;
+            streak.texture = tex;
         });
     }
 
@@ -851,13 +866,14 @@ export class Debug extends Component {
 
         const n = new Node('FxSpotLight');
         n.parent = root;
-        // 位于模型前上方，绕 Z 轴负向照射（与主光一致），yaw 由 update 摆动
-        n.setWorldPosition(new Vec3(960, 480, 420));
-        n.setRotationFromEuler(-55, 0, 0);
+        // 位于模型前上方，yaw 由 update 摆动扫射
+        n.setWorldPosition(new Vec3(960, 500, 480));
+        n.setRotationFromEuler(-45, 0, 0);
         const sl = n.addComponent(SpotLight);
-        sl.luminousFlux = LIGHT_LUMINOUS_FLUX;
-        sl.range = 2200;
-        sl.spotAngle = 32;
+        // 直接设 luminance（实测 luminousFlux 换算后过暗，luminance 控制实际亮度）
+        sl.luminance = LIGHT_LUMINANCE;
+        sl.range = 2600;
+        sl.spotAngle = 36;
         sl.color = new Color(255, 255, 255, 255);
         this.fxNodes.push(n);
     }
@@ -877,8 +893,8 @@ export class Debug extends Component {
         // 模型几何中心（modelRoot 世界坐标）
         n.setWorldPosition(new Vec3(960, 360, -50));
         const sl = n.addComponent(SphereLight);
-        sl.luminousFlux = LIGHT_LUMINOUS_FLUX;
-        sl.range = 1400;
+        sl.luminance = LIGHT_LUMINANCE;
+        sl.range = 1600;
         sl.size = 0.2;
         sl.color = new Color(255, 190, 120, 255);
         this.fxNodes.push(n);
@@ -916,23 +932,27 @@ export class Debug extends Component {
         const t = this.fxTimer;
         switch (this.engineFx) {
             case 'trail': {
-                // 椭圆轨迹飞行（拖尾组件自动生成尾迹）
+                // 椭圆轨迹飞行（拖尾节点与飞球节点同步移动）
                 this.trailAngle += dt * 2.2;
-                const n = this.fxNodes[0];
-                if (n) n.setPosition(Math.cos(this.trailAngle) * 260, Math.sin(this.trailAngle) * 170, 0);
+                const tx = Math.cos(this.trailAngle) * 260;
+                const ty = Math.sin(this.trailAngle) * 170;
+                const streakNode = this.fxNodes[0];
+                const ball = this.fxNodes[1];
+                if (streakNode) streakNode.setPosition(tx, ty, 0);
+                if (ball) ball.setPosition(tx, ty, 0);
                 break;
             }
             case 'spotlight': {
                 // 聚光灯左右扫射
                 const n = this.fxNodes[0];
-                if (n) n.setRotationFromEuler(-55, Math.sin(t * 1.1) * 45, 0);
+                if (n) n.setRotationFromEuler(-45, Math.sin(t * 1.1) * 45, 0);
                 break;
             }
             case 'pulse': {
-                // 光通量呼吸脉冲
+                // 亮度呼吸脉冲
                 const n = this.fxNodes[0];
                 const sl = n?.getComponent(SphereLight);
-                if (sl) sl.luminousFlux = LIGHT_LUMINOUS_FLUX * (0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t * 4)));
+                if (sl) sl.luminance = LIGHT_LUMINANCE * (0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t * 4)));
                 break;
             }
             case 'shockwave': {
