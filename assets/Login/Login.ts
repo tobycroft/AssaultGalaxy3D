@@ -256,28 +256,37 @@ export class Login extends Component {
 
         const editBox = node.addComponent(EditBox);
 
+        // 文本标签：EditBox 会把 textLabel/placeholderLabel 重排到输入框左上角
+        // （引擎 _resizeChildNodes/_updateLabelPosition），故必须用左上锚点 (0,1)，
+        // 否则默认中心锚点会让左对齐文本渲染到框外（错位）。
         const textNode = new Node('textLabel');
         textNode.layer = UI_LAYER;
-        textNode.addComponent(UITransform).setContentSize(w - 24, h);
-        textNode.setPosition(-12, 0, 0);
+        const textUT = textNode.addComponent(UITransform);
+        textUT.setAnchorPoint(0, 1);
+        textUT.setContentSize(w - 24, h);
+        textNode.setPosition(-w / 2 + 14, h / 2, 0);
         const textLabel = textNode.addComponent(Label);
         textLabel.string = '';
         textLabel.fontSize = 24;
         textLabel.color = BTN_ACTIVE;
         textLabel.horizontalAlign = Label.HorizontalAlign.LEFT;
         textLabel.verticalAlign = Label.VerticalAlign.CENTER;
+        textLabel.overflow = Label.Overflow.NONE;
         node.addChild(textNode);
 
         const phNode = new Node('placeholderLabel');
         phNode.layer = UI_LAYER;
-        phNode.addComponent(UITransform).setContentSize(w - 24, h);
-        phNode.setPosition(-12, 0, 0);
+        const phUT = phNode.addComponent(UITransform);
+        phUT.setAnchorPoint(0, 1);
+        phUT.setContentSize(w - 24, h);
+        phNode.setPosition(-w / 2 + 14, h / 2, 0);
         const phLabel = phNode.addComponent(Label);
         phLabel.string = placeholder;
         phLabel.fontSize = 24;
         phLabel.color = BTN_INACTIVE;
         phLabel.horizontalAlign = Label.HorizontalAlign.LEFT;
         phLabel.verticalAlign = Label.VerticalAlign.CENTER;
+        phLabel.overflow = Label.Overflow.NONE;
         node.addChild(phNode);
 
         editBox.textLabel = textLabel;
