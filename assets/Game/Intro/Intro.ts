@@ -157,10 +157,10 @@ export class Intro extends Component {
         this.tipOpacity.opacity = 0;
     }
 
-    /** 退出 Intro：整体淡出后离开（暂回首页，游戏主场景建成后改为跳转主场景） */
+    /** 退出 Intro：整体淡出后进入停机库（游戏入口流程的下一站） */
     private leave(): void {
         if (this.leaving) return;
         this.leaving = true;
-        fadeOutThen(this.node, 0.4, () => director.loadScene('Home'));
+        fadeOutThen(this.node, 0.4, () => director.loadScene('Hangar'));
     }
 }
