@@ -19,6 +19,12 @@ import {
     utils,
     UIOpacity,
     Mat4,
+    MotionStreak,
+    SpotLight,
+    SphereLight,
+    assetManager,
+    SpriteFrame,
+    tween,
 } from 'cc';
 import { fadeIn, fadeOutThen } from '../Common/UIAnim';
 import { paintTechButton, TechButtonKind, techTextColor, TechText } from '../Common/TechUI';
@@ -103,6 +109,45 @@ const FX_VERBS: Record<FxMode, string> = {
     sink: '塌陷沉没',
 };
 
+// ===== 引擎特效演示参数 =====
+/** 引擎特效演示类型（底部第二排按钮，点击后在预览区播放） */
+type EngineFxKind = 'easing' | 'trail' | 'spotlight' | 'pulse' | 'shockwave';
+/** 引擎特效演示按钮定义 */
+const ENGINE_FX_BUTTONS: { name: string; label: string; kind: EngineFxKind }[] = [
+    { name: 'BtnFxEasing', label: '缓动', kind: 'easing' },
+    { name: 'BtnFxTrail', label: '拖尾', kind: 'trail' },
+    { name: 'BtnFxSpotlight', label: '探照灯', kind: 'spotlight' },
+    { name: 'BtnFxPulse', label: '脉冲光', kind: 'pulse' },
+    { name: 'BtnFxShockwave', label: '冲击波', kind: 'shockwave' },
+];
+/** 引擎特效状态文案（体现引擎实现方式） */
+const ENGINE_FX_LABELS: Record<EngineFxKind, string> = {
+    easing: 'Tween 缓动赛道',
+    trail: 'MotionStreak 拖尾',
+    spotlight: 'SpotLight 探照灯',
+    pulse: 'SphereLight 脉冲光',
+    shockwave: 'Graphics 冲击波',
+};
+/** 缓动赛道演示的 tween 缓动函数列表（引擎内置 easing） */
+const FX_EASING_LIST: { label: string; easing: string }[] = [
+    { label: 'sineIn', easing: 'sineIn' },
+    { label: 'quadOut', easing: 'quadOut' },
+    { label: 'cubicOut', easing: 'cubicOut' },
+    { label: 'backOut', easing: 'backOut' },
+    { label: 'elasticOut', easing: 'elasticOut' },
+    { label: 'bounceOut', easing: 'bounceOut' },
+];
+/** 引擎特效各模式播放时长（秒） */
+const ENGINE_FX_DURATION: Record<EngineFxKind, number> = {
+    easing: 2.4,
+    trail: 3.2,
+    spotlight: 3.6,
+    pulse: 3.2,
+    shockwave: 1.2,
+};
+/** 探照灯/脉冲光的光通量（前向管线每帧仅 1 盏灯生效，播放期间需隐藏主光） */
+const LIGHT_LUMINOUS_FLUX = 16000;
+
 // 模型分类展示名（key 为 resources/Model 下的一级目录名）
 const CATEGORY_NAMES: Record<string, string> = {
     spaceship: '宇宙飞船',
@@ -138,8 +183,20 @@ export class Debug extends Component {
     private fxFlash: { node: Node; life: number; maxLife: number } | null = null;
     /** 特效是否播放中（播放中禁止再次触发/切换） */
     private fxRunning = false;
-    /** 全部特效按钮（用于可用态统一刷新） */
+    /** 全部特效按钮（解体 + 引擎特效演示，用于可用态统一刷新） */
     private fxButtons: Node[] = [];
+    /** 当前引擎特效演示类型（与解体特效互斥，共用 fxRunning） */
+    private engineFx: EngineFxKind | null = null;
+    /** 引擎特效节点列表（结束统一清理） */
+    private fxNodes: Node[] = [];
+    /** 引擎特效计时器（秒） */
+    private fxTimer = 0;
+    /** 拖尾飞球当前角度（update 驱动） */
+    private trailAngle = 0;
+    /** 探照灯/脉冲光播放期间被隐藏的主光节点（结束恢复） */
+    private hiddenTopLight: Node | null = null;
+    /** 冲击波圆环列表（update 驱动扩散） */
+    private shockRings: { g: Graphics; life: number; delay: number }[] = [];
 
     onLoad(): void {
         this.addLights();
@@ -188,30 +245,40 @@ export class Debug extends Component {
      * 创建特效按钮条（预览区下方）：爆裂 / 碎裂两个科技风按钮。
      * 未选中模型或特效播放中时置灰（点击由 playFx 拦截）。
      */
-    /** 创建特效按钮栏（预览区下方一排等宽按钮，7 种解体方式） */
+    /**
+     * 创建特效按钮栏（预览区下方两排）：
+     * 第一排 7 个解体特效，第二排 5 个引擎特效演示，均为等宽按钮。
+     */
     private createEffectBar(): void {
         const n = FX_BUTTONS.length;
         const totalW = n * FX_BTN_W + (n - 1) * FX_BTN_GAP;
         const bar = new Node('EffectBar');
         bar.layer = UI_LAYER;
-        bar.addComponent(UITransform).setContentSize(totalW, FX_BTN_H);
-        bar.setPosition(0, -300, 0);
+        bar.addComponent(UITransform).setContentSize(totalW, FX_BTN_H * 2 + 10);
+        bar.setPosition(0, -296, 0);
         this.node.addChild(bar);
 
+        // 第一排：解体特效
         FX_BUTTONS.forEach((def, i) => {
             const x = -totalW / 2 + FX_BTN_W / 2 + i * (FX_BTN_W + FX_BTN_GAP);
-            this.fxButtons.push(this.createFxButton(bar, def.name, def.label, x, def.mode));
+            this.fxButtons.push(this.createFxButton(bar, def.name, def.label, x, FX_BTN_H / 2 + 5, () => this.playFx(def.mode)));
+        });
+        // 第二排：引擎特效演示（同宽均布）
+        const m = ENGINE_FX_BUTTONS.length;
+        ENGINE_FX_BUTTONS.forEach((def, i) => {
+            const x = -totalW / 2 + (i + 0.5) * (totalW / m);
+            this.fxButtons.push(this.createFxButton(bar, def.name, def.label, x, -FX_BTN_H / 2 - 5, () => this.playEngineFx(def.kind)));
         });
         this.refreshFxButtons();
     }
 
     /** 创建单个特效按钮（科技风背景 + 文字，返回按钮节点） */
-    private createFxButton(parent: Node, name: string, label: string, x: number, mode: FxMode): Node {
+    private createFxButton(parent: Node, name: string, label: string, x: number, y: number, onClick: () => void): Node {
         const w = FX_BTN_W;
         const h = FX_BTN_H;
         const btn = new Node(name);
         btn.layer = UI_LAYER;
-        btn.setPosition(x, 0, 0);
+        btn.setPosition(x, y, 0);
         btn.addComponent(UITransform).setContentSize(w, h);
         paintTechButton(btn.addComponent(Graphics), w, h, 'danger');
 
@@ -226,7 +293,7 @@ export class Debug extends Component {
         l.verticalAlign = Label.VerticalAlign.CENTER;
         btn.addChild(labNode);
 
-        btn.on(Node.EventType.TOUCH_END, () => this.playFx(mode), this);
+        btn.on(Node.EventType.TOUCH_END, onClick, this);
         parent.addChild(btn);
         return btn;
     }
@@ -672,6 +739,231 @@ export class Debug extends Component {
         this.setStatus(`${FX_LABELS[mode]}！模型裂成 ${this.shards.length} 块${FX_VERBS[mode]}`);
     }
 
+    // ================= 引擎特效演示 =================
+
+    /**
+     * 播放引擎特效演示：在预览区展示各类 Cocos 引擎特效的实现效果
+     * （Tween 缓动 / MotionStreak 拖尾 / SpotLight 探照灯 / SphereLight 脉冲光 / Graphics 冲击波）。
+     * 与解体特效互斥（共用 fxRunning），播放中/未选中模型时忽略点击。
+     */
+    private playEngineFx(kind: EngineFxKind): void {
+        if (this.fxRunning) {
+            this.setStatus('特效播放中，请稍候…');
+            return;
+        }
+        if (!this.currentModel || !this.modelRoot) {
+            this.setStatus('请先在左侧选择一个模型');
+            return;
+        }
+
+        this.resetFx();
+        this.engineFx = kind;
+        this.fxTimer = 0;
+        this.fxNodes = [];
+        this.shockRings = [];
+        this.trailAngle = 0;
+
+        switch (kind) {
+            case 'easing': this.fxEasingTrack(); break;
+            case 'trail': this.fxTrailBall(); break;
+            case 'spotlight': this.fxSpotlightSweep(); break;
+            case 'pulse': this.fxPulseLight(); break;
+            case 'shockwave': this.fxShockwaveRings(); break;
+        }
+
+        this.fxRunning = true;
+        this.refreshFxButtons();
+        this.setStatus(`${ENGINE_FX_LABELS[kind]} 演示播放中…`);
+    }
+
+    /**
+     * Tween 缓动赛道：一排小球用不同缓动函数同时从左跑到右，直观对比引擎 tween 缓动。
+     */
+    private fxEasingTrack(): void {
+        const startX = -520;
+        const endX = 520;
+        FX_EASING_LIST.forEach((item, i) => {
+            const y = 210 - i * 42;
+            // 小球
+            const ball = new Node('EaseBall_' + item.label);
+            ball.layer = UI_LAYER;
+            ball.setPosition(startX, y, 0);
+            ball.addComponent(UITransform).setContentSize(28, 28);
+            const bg = ball.addComponent(Graphics);
+            bg.fillColor = new Color(0, 214, 255, 255);
+            bg.arc(0, 0, 14, 0, Math.PI * 2);
+            bg.fill();
+            this.node.addChild(ball);
+            this.fxNodes.push(ball);
+            // 缓动函数名
+            const labNode = new Node('EaseLab_' + item.label);
+            labNode.layer = UI_LAYER;
+            labNode.setPosition(endX + 60, y, 0);
+            labNode.addComponent(UITransform).setContentSize(200, 24);
+            const l = labNode.addComponent(Label);
+            l.string = item.label;
+            l.fontSize = 18;
+            l.color = TechText.caption;
+            l.horizontalAlign = Label.HorizontalAlign.LEFT;
+            l.verticalAlign = Label.VerticalAlign.CENTER;
+            this.node.addChild(labNode);
+            this.fxNodes.push(labNode);
+            // 引擎 tween：不同 easing 同时起跑
+            tween(ball).to(2.0, { position: new Vec3(endX, y, 0) }, { easing: item.easing }).start();
+        });
+    }
+
+    /**
+     * MotionStreak 拖尾：飞球沿椭圆轨迹绕行，引擎拖尾组件自动生成渐隐尾迹。
+     * 纹理用内置白色图（加载失败时退化为普通圆点飞行，仍有轨迹节点）。
+     */
+    private fxTrailBall(): void {
+        const ball = new Node('TrailBall');
+        ball.layer = UI_LAYER;
+        ball.setPosition(0, 0, 0);
+        ball.addComponent(UITransform).setContentSize(40, 40);
+        const bg = ball.addComponent(Graphics);
+        bg.fillColor = new Color(255, 240, 200, 255);
+        bg.arc(0, 0, 10, 0, Math.PI * 2);
+        bg.fill();
+        const streak = ball.addComponent(MotionStreak);
+        streak.fadeTime = 0.5;
+        streak.minSeg = 2;
+        streak.stroke = 24;
+        this.node.addChild(ball);
+        this.fxNodes.push(ball);
+
+        assetManager.loadAny('__default_sprite__/default_sprite', SpriteFrame, (err, sf) => {
+            if (!err && sf) streak.texture = (sf as SpriteFrame).texture;
+        });
+    }
+
+    /** SpotLight 探照灯：隐藏主光后由聚光灯左右扫射模型（前向管线每帧仅 1 盏灯生效） */
+    private fxSpotlightSweep(): void {
+        const root = this.node.parent;
+        if (!root) return;
+        // 隐藏主平行光，让聚光灯成为唯一光源
+        const topLight = root.getChildByName('TopLight');
+        if (topLight) {
+            topLight.active = false;
+            this.hiddenTopLight = topLight;
+        }
+
+        const n = new Node('FxSpotLight');
+        n.parent = root;
+        // 位于模型前上方，绕 Z 轴负向照射（与主光一致），yaw 由 update 摆动
+        n.setWorldPosition(new Vec3(960, 480, 420));
+        n.setRotationFromEuler(-55, 0, 0);
+        const sl = n.addComponent(SpotLight);
+        sl.luminousFlux = LIGHT_LUMINOUS_FLUX;
+        sl.range = 2200;
+        sl.spotAngle = 32;
+        sl.color = new Color(255, 255, 255, 255);
+        this.fxNodes.push(n);
+    }
+
+    /** SphereLight 脉冲光：球形点光源在模型中心做强度呼吸（光照脉冲） */
+    private fxPulseLight(): void {
+        const root = this.node.parent;
+        if (!root) return;
+        const topLight = root.getChildByName('TopLight');
+        if (topLight) {
+            topLight.active = false;
+            this.hiddenTopLight = topLight;
+        }
+
+        const n = new Node('FxPulseLight');
+        n.parent = root;
+        // 模型几何中心（modelRoot 世界坐标）
+        n.setWorldPosition(new Vec3(960, 360, -50));
+        const sl = n.addComponent(SphereLight);
+        sl.luminousFlux = LIGHT_LUMINOUS_FLUX;
+        sl.range = 1400;
+        sl.size = 0.2;
+        sl.color = new Color(255, 190, 120, 255);
+        this.fxNodes.push(n);
+    }
+
+    /** Graphics 冲击波：三圈错峰扩散的能量环（引擎 2D 绘制 + update 驱动） */
+    private fxShockwaveRings(): void {
+        const root = this.modelRoot;
+        if (!root) return;
+        for (let i = 0; i < 3; i++) {
+            const n = new Node('ShockRing_' + i);
+            n.layer = MODEL_LAYER;
+            n.setPosition(0, 0, 0);
+            n.addComponent(UITransform).setContentSize(10, 10);
+            const g = n.addComponent(Graphics);
+            root.addChild(n);
+            this.fxNodes.push(n);
+            this.shockRings.push({ g, life: 0, delay: i * 0.14 });
+        }
+    }
+
+    /** 绘制单圈冲击波：t∈[0,1] 半径 20→420、亮度衰减 */
+    private drawShockRing(g: Graphics, t: number): void {
+        const r = 20 + t * 400;
+        g.clear();
+        g.strokeColor = new Color(120, 220, 255, Math.round(220 * (1 - t)));
+        g.lineWidth = Math.max(1, 10 * (1 - t));
+        g.arc(0, 0, r, 0, Math.PI * 2);
+        g.stroke();
+    }
+
+    /** 引擎特效逐帧驱动（与解体特效的分支互斥） */
+    private updateEngineFx(dt: number): void {
+        this.fxTimer += dt;
+        const t = this.fxTimer;
+        switch (this.engineFx) {
+            case 'trail': {
+                // 椭圆轨迹飞行（拖尾组件自动生成尾迹）
+                this.trailAngle += dt * 2.2;
+                const n = this.fxNodes[0];
+                if (n) n.setPosition(Math.cos(this.trailAngle) * 260, Math.sin(this.trailAngle) * 170, 0);
+                break;
+            }
+            case 'spotlight': {
+                // 聚光灯左右扫射
+                const n = this.fxNodes[0];
+                if (n) n.setRotationFromEuler(-55, Math.sin(t * 1.1) * 45, 0);
+                break;
+            }
+            case 'pulse': {
+                // 光通量呼吸脉冲
+                const n = this.fxNodes[0];
+                const sl = n?.getComponent(SphereLight);
+                if (sl) sl.luminousFlux = LIGHT_LUMINOUS_FLUX * (0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t * 4)));
+                break;
+            }
+            case 'shockwave': {
+                for (const r of this.shockRings) {
+                    r.life += dt;
+                    if (r.life < r.delay) continue;
+                    const k = (r.life - r.delay) / 0.7;
+                    if (k >= 1) r.g.clear();
+                    else this.drawShockRing(r.g, k);
+                }
+                break;
+            }
+            default:
+                break;
+        }
+        if (t >= ENGINE_FX_DURATION[this.engineFx]) this.finishFx();
+    }
+
+    /** 清理引擎特效节点与临时状态（结束/复位时调用） */
+    private clearEngineFx(): void {
+        for (const n of this.fxNodes) n.destroy();
+        this.fxNodes = [];
+        this.shockRings = [];
+        this.engineFx = null;
+        // 恢复被隐藏的主光
+        if (this.hiddenTopLight) {
+            this.hiddenTopLight.active = true;
+            this.hiddenTopLight = null;
+        }
+    }
+
     /**
      * 从单个 MeshRenderer 提取三角形碎片：读取网格顶点/索引，按每组 2~3 个三角形
      * （总量受 FX_MAX_SHARDS 限制）拆成多个小 Mesh，各自挂节点用渲染节点世界矩阵定位，
@@ -875,6 +1167,11 @@ export class Debug extends Component {
         }
 
         if (!this.fxRunning) return;
+        // 引擎特效演示与解体特效分支互斥
+        if (this.engineFx) {
+            this.updateEngineFx(dt);
+            return;
+        }
         for (const sh of this.shards) {
             sh.life += dt;
             if (sh.life >= sh.maxLife) {
@@ -960,6 +1257,7 @@ export class Debug extends Component {
             this.shardRoot = null;
         }
         this.shards = [];
+        this.clearEngineFx();
         if (this.currentModel) this.currentModel.active = true;
         this.refreshFxButtons();
         this.setStatus('特效播放完毕，可再次点击或切换模型');
@@ -978,6 +1276,7 @@ export class Debug extends Component {
             this.fxFlash.node.destroy();
             this.fxFlash = null;
         }
+        this.clearEngineFx();
         if (this.currentModel) this.currentModel.active = true;
         this.refreshFxButtons();
     }
