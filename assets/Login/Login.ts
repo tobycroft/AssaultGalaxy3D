@@ -1,5 +1,6 @@
 import { _decorator, Color, Component, director, EditBox, Graphics, Label, Node, UITransform, Vec3 } from 'cc';
 import { fadeIn, pressEffect } from '../Common/UIAnim';
+import { paintTechButton, paintTechInput, TechButtonKind, techTextColor } from '../Common/TechUI';
 import { login, register, userInfo, AuthUser, UserInfo } from '../Common/Api';
 import { Session } from '../Common/Session';
 
@@ -10,11 +11,9 @@ const { ccclass } = _decorator;
 
 /** UI 层 bitmask，与项目 Settings.ts 保持一致 */
 const UI_LAYER = 33554432;
-const BTN_COLOR = new Color(45, 74, 122, 255);
-const BTN_ACTIVE = new Color(255, 255, 255, 255);
-const BTN_INACTIVE = new Color(150, 150, 150, 255);
-const INPUT_BG = new Color(25, 40, 65, 255);
-const INPUT_BORDER = new Color(120, 200, 255, 255);
+const BTN_ACTIVE = new Color(235, 252, 255, 255);
+const BTN_INACTIVE = new Color(120, 150, 175, 255);
+const INPUT_BORDER = new Color(0, 190, 230, 255);
 const BG_COLOR = new Color(12, 18, 30, 255);
 
 /**
@@ -110,7 +109,7 @@ export class Login extends Component {
         const switchBtn = this.createButton(card, 'Switch', '没有账号？去注册', 0, -115, 280, 40, () => {
             this.mode = this.mode === 'login' ? 'register' : 'login';
             this.applyMode();
-        });
+        }, 'ghost');
         pressEffect(switchBtn);
         this.switchLabel = switchBtn.getChildByName('Label')!.getComponent(Label)!;
         this.switchLabel.color = new Color(120, 200, 255, 255);
@@ -222,24 +221,22 @@ export class Login extends Component {
         w: number,
         h: number,
         onClick?: () => void,
+        kind: TechButtonKind = 'primary',
     ): Node {
         const btn = new Node(name);
         btn.layer = UI_LAYER;
         btn.setPosition(x, y, 0);
         const ut = btn.addComponent(UITransform);
         ut.setContentSize(w, h);
-        const g = btn.addComponent(Graphics);
-        g.fillColor = BTN_COLOR;
-        g.roundRect(-w / 2, -h / 2, w, h, 10);
-        g.fill();
+        paintTechButton(btn.addComponent(Graphics), w, h, kind);
 
         const labNode = new Node('Label');
         labNode.layer = UI_LAYER;
         labNode.addComponent(UITransform).setContentSize(w, h);
         const l = labNode.addComponent(Label);
         l.string = label;
-        l.fontSize = 24;
-        l.color = BTN_ACTIVE;
+        l.fontSize = 26;
+        l.color = techTextColor(kind);
         l.horizontalAlign = Label.HorizontalAlign.CENTER;
         l.verticalAlign = Label.VerticalAlign.CENTER;
         btn.addChild(labNode);
@@ -266,14 +263,7 @@ export class Login extends Component {
         node.setPosition(x, y, 0);
         node.addComponent(UITransform).setContentSize(w, h);
 
-        const g = node.addComponent(Graphics);
-        g.fillColor = INPUT_BG;
-        g.roundRect(-w / 2, -h / 2, w, h, 8);
-        g.fill();
-        g.strokeColor = INPUT_BORDER;
-        g.lineWidth = 2;
-        g.roundRect(-w / 2, -h / 2, w, h, 8);
-        g.stroke();
+        paintTechInput(node.addComponent(Graphics), w, h);
 
         const editBox = node.addComponent(EditBox);
 

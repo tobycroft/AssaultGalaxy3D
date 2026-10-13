@@ -1,8 +1,9 @@
-import { _decorator, Component, director, game, Node, Vec3, Color, UITransform, Graphics, Label } from 'cc';
+import { _decorator, Component, director, game, Node, Vec3, Color, Button, Sprite, UITransform, Graphics, Label } from 'cc';
 import { fadeIn, fadeOutThen, popIn, pressEffect } from '../Common/UIAnim';
 import { MusicManager } from '../Common/MusicManager';
 import { SettingsStore } from '../Common/SettingsStore';
 import { Session } from '../Common/Session';
+import { paintTechButton, paintTechInput, TechButtonKind, techTextColor } from '../Common/TechUI';
 
 const { ccclass } = _decorator;
 
@@ -25,6 +26,7 @@ export class Home extends Component {
             director.loadScene('Login');
             return;
         }
+        this.restyleMenuButtons();
         this.playEnterAnim();
         this.createMusicToggle();
         this.bindSettingsButton();
@@ -99,10 +101,7 @@ export class Home extends Component {
         btn.setPosition(540, 320, 0);
         const ut = btn.addComponent(UITransform);
         ut.setContentSize(w, h);
-        const g = btn.addComponent(Graphics);
-        g.fillColor = new Color(45, 74, 122, 255);
-        g.roundRect(-w / 2, -h / 2, w, h, 10);
-        g.fill();
+        paintTechButton(btn.addComponent(Graphics), w, h, 'primary');
 
         const labNode = new Node('Label');
         labNode.layer = canvas.layer;
@@ -117,7 +116,7 @@ export class Home extends Component {
         const refresh = (): void => {
             const on = MusicManager.get()?.isOn ?? true;
             l.string = on ? '音乐：开' : '音乐：关';
-            l.color = on ? new Color(255, 255, 255, 255) : new Color(150, 150, 150, 255);
+            l.color = on ? new Color(235, 252, 255, 255) : new Color(120, 150, 175, 255);
         };
         refresh();
 
@@ -166,10 +165,7 @@ export class Home extends Component {
         badge.setPosition(-520, 320, 0);
         const ut = badge.addComponent(UITransform);
         ut.setContentSize(w, h);
-        const g = badge.addComponent(Graphics);
-        g.fillColor = new Color(30, 48, 78, 255);
-        g.roundRect(-w / 2, -h / 2, w, h, 10);
-        g.fill();
+        paintTechInput(badge.addComponent(Graphics), w, h);
 
         const labNode = new Node('Label');
         labNode.layer = canvas.layer;
@@ -177,7 +173,7 @@ export class Home extends Component {
         const l = labNode.addComponent(Label);
         l.string = name;
         l.fontSize = 24;
-        l.color = new Color(200, 220, 255, 255);
+        l.color = new Color(200, 232, 255, 255);
         l.horizontalAlign = Label.HorizontalAlign.CENTER;
         l.verticalAlign = Label.VerticalAlign.CENTER;
         badge.addChild(labNode);
@@ -196,25 +192,22 @@ export class Home extends Component {
         w: number,
         h: number,
         onClick?: () => void,
-        color: Color = new Color(45, 74, 122, 255),
+        kind: TechButtonKind = 'primary',
     ): Node {
         const btn = new Node(name);
         btn.layer = this.node.parent!.layer;
         btn.setPosition(x, y, 0);
         const ut = btn.addComponent(UITransform);
         ut.setContentSize(w, h);
-        const g = btn.addComponent(Graphics);
-        g.fillColor = color;
-        g.roundRect(-w / 2, -h / 2, w, h, 10);
-        g.fill();
+        paintTechButton(btn.addComponent(Graphics), w, h, kind);
 
         const labNode = new Node('Label');
         labNode.layer = this.node.parent!.layer;
         labNode.addComponent(UITransform).setContentSize(w, h);
         const l = labNode.addComponent(Label);
         l.string = label;
-        l.fontSize = 24;
-        l.color = new Color(255, 255, 255, 255);
+        l.fontSize = 26;
+        l.color = techTextColor(kind);
         l.horizontalAlign = Label.HorizontalAlign.CENTER;
         l.verticalAlign = Label.VerticalAlign.CENTER;
         btn.addChild(labNode);
@@ -222,6 +215,40 @@ export class Home extends Component {
         if (onClick) btn.on(Node.EventType.TOUCH_END, onClick, this);
         parent.addChild(btn);
         return btn;
+    }
+
+    /** 将场景自带的默认按钮（Sprite+Button）替换为科技风外观 */
+    private restyleMenuButtons(): void {
+        const canvas = this.node.parent;
+        const panel = canvas?.getChildByName('MenuPanel');
+        const targets: { node: Node | null | undefined; kind: TechButtonKind }[] = [
+            { node: panel?.getChildByName('BtnStart'), kind: 'primary' },
+            { node: panel?.getChildByName('BtnSettings'), kind: 'primary' },
+            { node: panel?.getChildByName('BtnExit'), kind: 'danger' },
+            { node: canvas?.getChildByName('BtnDebug'), kind: 'ghost' },
+        ];
+        targets.forEach((t) => {
+            if (t.node) this.restyleSceneButton(t.node, t.kind);
+        });
+    }
+
+    /** 去掉默认 Sprite，改绘科技风按钮背景，并提亮文字 */
+    private restyleSceneButton(btn: Node, kind: TechButtonKind): void {
+        const ut = btn.getComponent(UITransform);
+        const w = ut ? ut.contentSize.width : 220;
+        const h = ut ? ut.contentSize.height : 64;
+        const sprite = btn.getComponent(Sprite);
+        if (sprite) sprite.destroy();
+        const button = btn.getComponent(Button);
+        if (button) button.transition = Button.Transition.NONE;
+        let g = btn.getComponent(Graphics);
+        if (!g) g = btn.addComponent(Graphics);
+        paintTechButton(g, w, h, kind);
+        const label = btn.getChildByName('Label')?.getComponent(Label);
+        if (label) {
+            label.color = techTextColor(kind);
+            label.fontSize = Math.max(22, Math.min(28, Math.round(h * 0.42)));
+        }
     }
 
     /** 弹出退出确认框（半透明遮罩 + 面板 + 确认/取消），确认后调用 game.end() 退出 */
@@ -265,7 +292,7 @@ export class Home extends Component {
 
         // 确认 / 取消
         const confirmBtn = this.createEntryButton(panel, 'BtnConfirm', '确认退出', -85, -55, 150, 52,
-            () => game.end(), new Color(168, 66, 74, 255));
+            () => game.end(), 'danger');
         pressEffect(confirmBtn);
         const cancelBtn = this.createEntryButton(panel, 'BtnCancel', '取消', 85, -55, 150, 52,
             () => this.closeExitConfirm());

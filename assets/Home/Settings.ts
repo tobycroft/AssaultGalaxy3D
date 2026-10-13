@@ -15,18 +15,16 @@ import { fadeIn, fadeOutThen, pressEffect } from '../Common/UIAnim';
 import { MusicManager } from '../Common/MusicManager';
 import { SettingsStore } from '../Common/SettingsStore';
 import { Session } from '../Common/Session';
+import { paintTechButton, TechButtonKind, techTextColor } from '../Common/TechUI';
 
 const { ccclass } = _decorator;
 
 // 与项目一致的 UI 样式常量
 const UI_LAYER = 33554432;
-const BTN_COLOR = new Color(45, 74, 122, 255);
-const BTN_ACTIVE = new Color(255, 255, 255, 255);
-const BTN_INACTIVE = new Color(150, 150, 150, 255);
-/** 退出登录按钮色调（区别于普通蓝色按钮） */
-const LOGOUT_COLOR = new Color(150, 62, 72, 255);
+const BTN_ACTIVE = new Color(235, 252, 255, 255);
+const BTN_INACTIVE = new Color(120, 150, 175, 255);
 /** Tab 选中高亮色调 */
-const TAB_ACTIVE = new Color(120, 200, 255, 255);
+const TAB_ACTIVE = new Color(0, 214, 255, 255);
 
 /** 设置页 Tab：游戏设置 / 账号设置 */
 type SettingsTab = 'game' | 'account';
@@ -137,7 +135,7 @@ export class Settings extends Component {
         defs.forEach((d, i) => {
             const btn = this.createButton(canvas, 'Tab_' + d.key, d.label, d.x, 240, 170, 52, () => {
                 this.switchTab(d.key);
-            });
+            }, 'ghost');
             pressEffect(btn);
             fadeIn(btn, new Vec3(0, -20, 0), 0.1 + i * 0.06);
             this.tabLabels.push(btn.getChildByName('Label')!.getComponent(Label)!);
@@ -206,7 +204,7 @@ export class Settings extends Component {
 
         // 已登录：退出登录
         this.logoutBtn = this.createButton(panel, 'BtnLogout', '退出登录', 0, -50, 260, 56,
-            () => this.onLogout(), LOGOUT_COLOR);
+            () => this.onLogout(), 'danger');
         pressEffect(this.logoutBtn);
         fadeIn(this.logoutBtn, new Vec3(0, -20, 0), 0.35);
     }
@@ -261,8 +259,11 @@ export class Settings extends Component {
         const handleSize = h + 10;
         handle.addComponent(UITransform).setContentSize(handleSize, handleSize);
         const hg = handle.addComponent(Graphics);
-        hg.fillColor = new Color(255, 255, 255, 255);
+        hg.fillColor = new Color(0, 214, 255, 255);
         hg.circle(0, 0, handleSize / 2);
+        hg.fill();
+        hg.fillColor = new Color(235, 252, 255, 255);
+        hg.circle(0, 0, handleSize / 2 - 5);
         hg.fill();
         node.addChild(handle);
 
@@ -270,11 +271,15 @@ export class Settings extends Component {
         const g = node.addComponent(Graphics);
         const drawBar = (p: number): void => {
             g.clear();
-            g.fillColor = new Color(60, 90, 140, 255);
+            g.fillColor = new Color(20, 40, 66, 255);
             g.roundRect(-w / 2, -h / 2, w, h, h / 2);
             g.fill();
-            g.fillColor = new Color(120, 200, 255, 255);
-            g.roundRect(-w / 2, -h / 2, Math.max(h, p * w), h, h / 2);
+            const fw = Math.max(h, p * w);
+            g.fillColor = new Color(0, 150, 200, 255);
+            g.roundRect(-w / 2, -h / 2, fw, h, h / 2);
+            g.fill();
+            g.fillColor = new Color(0, 229, 255, 255);
+            g.roundRect(-w / 2, -h / 2 + h * 0.28, fw, h * 0.44, h * 0.22);
             g.fill();
         };
         const setProgress = (v: number): void => {
@@ -309,11 +314,10 @@ export class Settings extends Component {
             const active = row.current() === opt.value;
             const btn = this.createButton(parent, 'Opt_' + opt.label, opt.label, ox, y, 120, 52, () => {
                 row.apply(opt.value);
-                // 刷新本行高亮
                 row.options.forEach((o2, j) => {
                     labels[j].color = o2.value === opt.value ? BTN_ACTIVE : BTN_INACTIVE;
                 });
-            });
+            }, 'ghost');
             pressEffect(btn);
             fadeIn(btn, new Vec3(0, -20, 0), delay + i * 0.06);
             const l = btn.getChildByName('Label')!.getComponent(Label)!;
@@ -341,16 +345,13 @@ export class Settings extends Component {
     }
 
     private createButton(parent: Node, name: string, label: string, x: number, y: number,
-        w: number, h: number, onClick?: () => void, color: Color = BTN_COLOR): Node {
+        w: number, h: number, onClick?: () => void, kind: TechButtonKind = 'primary'): Node {
         const btn = new Node(name);
         btn.layer = UI_LAYER;
         btn.setPosition(x, y, 0);
         const ut = btn.addComponent(UITransform);
         ut.setContentSize(w, h);
-        const g = btn.addComponent(Graphics);
-        g.fillColor = color;
-        g.roundRect(-w / 2, -h / 2, w, h, 10);
-        g.fill();
+        paintTechButton(btn.addComponent(Graphics), w, h, kind);
 
         const labNode = new Node('Label');
         labNode.layer = UI_LAYER;
@@ -359,7 +360,7 @@ export class Settings extends Component {
         const l = labNode.addComponent(Label);
         l.string = label;
         l.fontSize = 24;
-        l.color = BTN_ACTIVE;
+        l.color = techTextColor(kind);
         l.horizontalAlign = Label.HorizontalAlign.CENTER;
         l.verticalAlign = Label.VerticalAlign.CENTER;
         btn.addChild(labNode);
