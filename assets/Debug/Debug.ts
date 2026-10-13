@@ -17,8 +17,8 @@ import {
     MeshRenderer,
     DirectionalLight,
     utils,
-    AttributeName,
     UIOpacity,
+    Mat4,
 } from 'cc';
 import { fadeIn, fadeOutThen } from '../Common/UIAnim';
 import { paintTechButton, TechButtonKind, techTextColor, TechText } from '../Common/TechUI';
@@ -171,6 +171,7 @@ export class Debug extends Component {
         btn.addChild(labNode);
 
         btn.on(Node.EventType.TOUCH_END, () => this.playFx(mode), this);
+        parent.addChild(btn);
         return btn;
     }
 
@@ -630,9 +631,10 @@ export class Debug extends Component {
         let made = 0;
 
         for (let s = 0; s < subCount; s++) {
-            const positions = mesh.readAttribute(s, AttributeName.ATTR_POSITION) as Float32Array | null;
-            const normals = mesh.readAttribute(s, AttributeName.ATTR_NORMAL) as Float32Array | null;
-            const uvs = mesh.readAttribute(s, AttributeName.ATTR_TEX_COORD) as Float32Array | null;
+            // 顶点属性名（gfx.AttributeName 不在 cc 顶层导出，直接用其字符串值）
+            const positions = mesh.readAttribute(s, 'a_position') as Float32Array | null;
+            const normals = mesh.readAttribute(s, 'a_normal') as Float32Array | null;
+            const uvs = mesh.readAttribute(s, 'a_texCoord') as Float32Array | null;
             const indices = mesh.readIndices(s);
             if (!positions || !indices) continue;
 
@@ -690,11 +692,17 @@ export class Debug extends Component {
                 });
                 const n = new Node('Shard');
                 n.layer = MODEL_LAYER;
-                // 必须先入树再设世界矩阵（setter 会按父变换换算成本地矩阵），
-                // 顶点是渲染节点局部坐标，复制其世界矩阵即可原位呈现
                 shardRoot.addChild(n);
-                n.matrix = renderer.node.worldMatrix;
-                // 记录初始缩放（世界矩阵换算而来），尾部缩放在此基础上叠加
+                // Node.matrix setter 直接存本地矩阵（不按父变换换算），
+                // 需先把渲染节点的世界矩阵换算到 modelRoot 空间再传入，
+                // 顶点是渲染节点局部坐标，这样碎片恰好原位呈现
+                const localMatrix = Mat4.multiply(
+                    new Mat4(),
+                    Mat4.invert(new Mat4(), this.modelRoot!.worldMatrix),
+                    renderer.node.worldMatrix,
+                );
+                n.matrix = localMatrix;
+                // 记录初始缩放（来自渲染节点世界矩阵换算），尾部缩放在此基础上叠加
                 const baseScale = new Vec3(n.scale.x, n.scale.y, n.scale.z);
                 const mr = n.addComponent(MeshRenderer);
                 mr.mesh = m;
