@@ -126,6 +126,9 @@ export class Debug extends Component {
         let pending = infos.length;
         infos.forEach((info) => {
             resources.load(info.path, Prefab, (err, prefab) => {
+                // 资源异步返回时场景可能已切换（组件已销毁，this.node 为 null），
+                // 直接放弃后续处理，避免回调里访问空节点崩溃
+                if (!this.isValid) return;
                 if (!err && prefab) loaded.push({ path: info.path, prefab });
                 pending--;
                 if (pending > 0) return;
@@ -144,6 +147,7 @@ export class Debug extends Component {
      * 各列沿画布宽度平均分布、顶部对齐。容器本身可在编辑器里拖动整体移动。
      */
     private showModelButtons(items: { path: string; prefab: Prefab }[]): void {
+        if (!this.node) return; // 组件已随场景销毁，不再生成按钮
         const parent = this.modelButtonContainer ?? this.node;
 
         const groups = new Map<string, { path: string; prefab: Prefab }[]>();
@@ -162,7 +166,7 @@ export class Debug extends Component {
         });
 
         // 列布局：均分画布宽度，列宽 = 画布宽 / 列数，按钮留出列间距
-        const canvasW = this.node.getComponent(UITransform)!.width;
+        const canvasW = this.node?.getComponent(UITransform)?.width ?? 960;
         const topY = 200;
         const CAPTION_H = 36;
         const CAPTION_MARGIN = 10;
@@ -265,6 +269,8 @@ export class Debug extends Component {
         this.currentModel = model;
         this.spin = false;
         this.scheduleOnce(() => {
+            // 延迟一帧执行，期间场景可能已切换，先校验组件与模型根节点
+            if (!this.isValid || !this.modelRoot) return;
             this.fitModel(model);
             this.spin = true;
         }, 0);
