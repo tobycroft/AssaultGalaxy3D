@@ -3,7 +3,7 @@ import { fadeIn, fadeOutThen, popIn, pressEffect } from '../Common/UIAnim';
 import { MusicManager } from '../Common/MusicManager';
 import { SettingsStore } from '../Common/SettingsStore';
 import { Session } from '../Common/Session';
-import { paintTechButton, paintTechInput, TechButtonKind, techTextColor } from '../Common/TechUI';
+import { paintTechButton, paintTechInput, TechButtonKind, TechText, techTextColor } from '../Common/TechUI';
 
 const { ccclass } = _decorator;
 
@@ -26,11 +26,9 @@ export class Home extends Component {
             director.loadScene('Login');
             return;
         }
-        this.restyleMenuButtons();
+        this.simplifyMenuButtons();
         this.playEnterAnim();
         this.createMusicToggle();
-        this.bindSettingsButton();
-        this.bindExitButton();
         this.bindLoginEntry();
     }
 
@@ -42,24 +40,6 @@ export class Home extends Component {
     /** 点击设置按钮：淡出后进入设置场景 */
     public onSettingsClick(): void {
         this.switchScene('Settings');
-    }
-
-    /** 代码绑定菜单面板中的设置按钮（场景中按钮未挂回调，统一由这里接管） */
-    private bindSettingsButton(): void {
-        const canvas = this.node.parent;
-        const btn = canvas?.getChildByName('MenuPanel')?.getChildByName('BtnSettings');
-        if (!btn) return;
-        btn.on(Node.EventType.TOUCH_END, () => this.onSettingsClick(), this);
-        pressEffect(btn);
-    }
-
-    /** 代码绑定菜单面板中的退出按钮：点击弹出退出确认框 */
-    private bindExitButton(): void {
-        const canvas = this.node.parent;
-        const btn = canvas?.getChildByName('MenuPanel')?.getChildByName('BtnExit');
-        if (!btn) return;
-        btn.on(Node.EventType.TOUCH_END, () => this.openExitConfirm(), this);
-        pressEffect(btn);
     }
 
     /** 入场动画：菜单面板从左侧滑入，面板内按钮依次上浮淡入，右下角按钮弹出 */
@@ -217,38 +197,55 @@ export class Home extends Component {
         return btn;
     }
 
-    /** 将场景自带的默认按钮（Sprite+Button）替换为科技风外观 */
-    private restyleMenuButtons(): void {
+    /**
+     * 将场景自带的默认按钮统一简化为纯文字菜单项：
+     * 去掉背景 Sprite 与 Button 组件，只保留 Label 文字，鼠标悬停/按下时提亮。
+     * 注意：引擎限制一个节点只能有一个可渲染 UI 组件（uiComp），场景按钮的 Sprite
+     * 占用该位置后再添加 Graphics 会被拒绝（warnID 12002）导致背景画不出来，
+     * 因此这里不替换背景，直接采用纯文字方案。
+     */
+    private simplifyMenuButtons(): void {
         const canvas = this.node.parent;
         const panel = canvas?.getChildByName('MenuPanel');
-        const targets: { node: Node | null | undefined; kind: TechButtonKind }[] = [
-            { node: panel?.getChildByName('BtnStart'), kind: 'primary' },
-            { node: panel?.getChildByName('BtnSettings'), kind: 'primary' },
-            { node: panel?.getChildByName('BtnExit'), kind: 'danger' },
-            { node: canvas?.getChildByName('BtnDebug'), kind: 'ghost' },
+        const targets: { node: Node | null | undefined; kind: TechButtonKind; onClick: () => void }[] = [
+            // 进入游戏：当前唯一的游戏世界场景为 Debug
+            { node: panel?.getChildByName('BtnStart'), kind: 'primary', onClick: () => this.switchScene('Debug') },
+            { node: panel?.getChildByName('BtnSettings'), kind: 'primary', onClick: () => this.onSettingsClick() },
+            { node: panel?.getChildByName('BtnExit'), kind: 'danger', onClick: () => this.openExitConfirm() },
+            { node: canvas?.getChildByName('BtnDebug'), kind: 'ghost', onClick: () => this.onDebugClick() },
         ];
         targets.forEach((t) => {
-            if (t.node) this.restyleSceneButton(t.node, t.kind);
+            if (t.node) this.simplifySceneButton(t.node, t.kind, t.onClick);
         });
     }
 
-    /** 去掉默认 Sprite，改绘科技风按钮背景，并提亮文字 */
-    private restyleSceneButton(btn: Node, kind: TechButtonKind): void {
-        const ut = btn.getComponent(UITransform);
-        const w = ut ? ut.contentSize.width : 220;
-        const h = ut ? ut.contentSize.height : 64;
+    /**
+     * 去掉场景默认按钮的 Sprite 背景与 Button 组件，保留文字标签：
+     * 默认暗色，鼠标悬停/按下提亮，点击触发回调（含按压缩放反馈）。
+     */
+    private simplifySceneButton(btn: Node, kind: TechButtonKind, onClick: () => void): void {
         const sprite = btn.getComponent(Sprite);
         if (sprite) sprite.destroy();
         const button = btn.getComponent(Button);
-        if (button) button.transition = Button.Transition.NONE;
-        let g = btn.getComponent(Graphics);
-        if (!g) g = btn.addComponent(Graphics);
-        paintTechButton(g, w, h, kind);
-        const label = btn.getChildByName('Label')?.getComponent(Label);
-        if (label) {
-            label.color = techTextColor(kind);
-            label.fontSize = Math.max(22, Math.min(28, Math.round(h * 0.42)));
-        }
+        if (button) button.destroy();
+
+        const label = btn.getChildByName('Label')?.getComponent(Label) ?? null;
+        const normal = TechText.dim;
+        const active = techTextColor(kind);
+        const setColor = (c: Color): void => {
+            if (label) label.color = c;
+        };
+        setColor(normal);
+
+        // 鼠标悬停提亮、移出恢复
+        btn.on(Node.EventType.MOUSE_ENTER, () => setColor(active), this);
+        btn.on(Node.EventType.MOUSE_LEAVE, () => setColor(normal), this);
+        // 触屏：按下提亮、抬起/取消恢复
+        btn.on(Node.EventType.TOUCH_START, () => setColor(active), this);
+        btn.on(Node.EventType.TOUCH_CANCEL, () => setColor(normal), this);
+        btn.on(Node.EventType.TOUCH_END, () => setColor(normal), this);
+        btn.on(Node.EventType.TOUCH_END, onClick, this);
+        pressEffect(btn);
     }
 
     /** 弹出退出确认框（半透明遮罩 + 面板 + 确认/取消），确认后调用 game.end() 退出 */
