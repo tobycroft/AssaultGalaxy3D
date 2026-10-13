@@ -205,8 +205,8 @@ export class Home extends Component {
         const canvas = this.node.parent;
         const panel = canvas?.getChildByName('MenuPanel');
         const targets: { node: Node | null | undefined; kind: TechButtonKind; onClick?: () => void }[] = [
-            // 进入游戏：当前唯一的游戏世界场景为 Debug
-            { node: panel?.getChildByName('BtnStart'), kind: 'primary', onClick: () => this.switchScene('Debug') },
+            // 进入游戏：先进入 Game/Intro 开场动画场景
+            { node: panel?.getChildByName('BtnStart'), kind: 'primary', onClick: () => this.switchScene('Intro') },
             { node: panel?.getChildByName('BtnSettings'), kind: 'primary', onClick: () => this.onSettingsClick() },
             { node: panel?.getChildByName('BtnExit'), kind: 'danger', onClick: () => this.openExitConfirm() },
             // BtnDebug 的点击由场景中 Button 的 clickEvents 绑定（onDebugClick），此处只补样式与悬停
