@@ -36,7 +36,9 @@ const TARGET_MODEL_SIZE = 380;
 // 加载界面进度环半径
 const LOADING_RING_R = 40;
 
-// ===== 爆炸 / 碎裂特效参数 =====
+// ===== 解体特效参数 =====
+/** 解体模式：爆裂/碎裂/汽化/黑洞/旋风/切割/熔陷 */
+type FxMode = 'burst' | 'shatter' | 'vaporize' | 'blackhole' | 'whirlwind' | 'slice' | 'sink';
 /** 单次特效最多生成的碎片数（防模型面数过多时卡顿） */
 const FX_MAX_SHARDS = 120;
 /** 碎片重力加速度（世界单位/秒²） */
@@ -47,8 +49,59 @@ const FX_BURST_LIFE = 1.0;
 /** 碎裂模式：碎片初速度上限、生命周期（秒） */
 const FX_SHATTER_SPEED = 130;
 const FX_SHATTER_LIFE = 1.8;
+/** 汽化模式：生命周期（秒），碎片原地缩放溶解 */
+const FX_VAPORIZE_LIFE = 0.7;
+/** 黑洞模式：生命周期（秒）、向心加速度、速度上限 */
+const FX_BLACKHOLE_LIFE = 1.2;
+const FX_BLACKHOLE_G = 900;
+const FX_BLACKHOLE_MAX_SPEED = 620;
+/** 旋风模式：生命周期（秒）、绕轴角速度（rad/s）、上升速度、径向扩散（比例/秒） */
+const FX_WHIRLWIND_LIFE = 1.6;
+const FX_WHIRLWIND_OMEGA = 2.4;
+const FX_WHIRLWIND_UP = 260;
+const FX_WHIRLWIND_SPREAD = 0.5;
+/** 切割模式：两半分离速度、生命周期（秒） */
+const FX_SLICE_SPEED = 170;
+const FX_SLICE_LIFE = 1.0;
+/** 熔陷模式：下沉重力、生命周期（秒）、modelRoot 本地下沉底 */
+const FX_SINK_GRAVITY = 700;
+const FX_SINK_LIFE = 1.5;
+const FX_SINK_FLOOR = -330;
 /** 中央闪光生命周期（秒） */
 const FX_FLASH_LIFE = 0.45;
+/** 特效按钮栏：一排等宽按钮 */
+const FX_BTN_W = 116;
+const FX_BTN_H = 48;
+const FX_BTN_GAP = 10;
+/** 特效按钮定义（名称/文案/模式） */
+const FX_BUTTONS: { name: string; label: string; mode: FxMode }[] = [
+    { name: 'BtnBurst', label: '爆裂', mode: 'burst' },
+    { name: 'BtnShatter', label: '碎裂', mode: 'shatter' },
+    { name: 'BtnVaporize', label: '汽化', mode: 'vaporize' },
+    { name: 'BtnBlackhole', label: '黑洞', mode: 'blackhole' },
+    { name: 'BtnWhirlwind', label: '旋风', mode: 'whirlwind' },
+    { name: 'BtnSlice', label: '切割', mode: 'slice' },
+    { name: 'BtnSink', label: '熔陷', mode: 'sink' },
+];
+/** 各模式状态栏文案：名称 + 解体动作描述 */
+const FX_LABELS: Record<FxMode, string> = {
+    burst: '爆裂',
+    shatter: '碎裂',
+    vaporize: '汽化',
+    blackhole: '黑洞',
+    whirlwind: '旋风',
+    slice: '切割',
+    sink: '熔陷',
+};
+const FX_VERBS: Record<FxMode, string> = {
+    burst: '飞溅而出',
+    shatter: '塌落解体',
+    vaporize: '蒸发消失',
+    blackhole: '被吸入湮灭',
+    whirlwind: '螺旋卷走',
+    slice: '沿平面分离',
+    sink: '塌陷沉没',
+};
 
 // 模型分类展示名（key 为 resources/Model 下的一级目录名）
 const CATEGORY_NAMES: Record<string, string> = {
@@ -75,20 +128,18 @@ export class Debug extends Component {
     private spinNode: Node | null = null;
     /** 装饰弧当前旋转角（度），由 update 逐帧累加 */
     private spinAngle = 0;
-    /** 特效模式：burst 爆裂（高速飞溅）/ shatter 碎裂（塌落解体） */
-    private fxMode: 'burst' | 'shatter' = 'burst';
+    /** 当前特效模式（7 种解体方式之一） */
+    private fxMode: FxMode = 'burst';
     /** 碎片容器节点（挂在 modelRoot 下，特效期间存在） */
     private shardRoot: Node | null = null;
     /** 活动碎片列表（位置/速度由 update 驱动） */
     private shards: { node: Node; vel: Vec3; ang: Vec3; life: number; maxLife: number; baseScale: Vec3 }[] = [];
-    /** 爆裂中央闪光（圆环，由 update 驱动放大淡出） */
+    /** 爆裂/切割中央闪光（圆环，由 update 驱动放大淡出） */
     private fxFlash: { node: Node; life: number; maxLife: number } | null = null;
     /** 特效是否播放中（播放中禁止再次触发/切换） */
     private fxRunning = false;
-    /** 爆裂特效按钮（用于可用态刷新） */
-    private fxBurstBtn: Node | null = null;
-    /** 碎裂特效按钮（用于可用态刷新） */
-    private fxShatterBtn: Node | null = null;
+    /** 全部特效按钮（用于可用态统一刷新） */
+    private fxButtons: Node[] = [];
 
     onLoad(): void {
         this.addLights();
@@ -137,22 +188,27 @@ export class Debug extends Component {
      * 创建特效按钮条（预览区下方）：爆裂 / 碎裂两个科技风按钮。
      * 未选中模型或特效播放中时置灰（点击由 playFx 拦截）。
      */
+    /** 创建特效按钮栏（预览区下方一排等宽按钮，7 种解体方式） */
     private createEffectBar(): void {
+        const n = FX_BUTTONS.length;
+        const totalW = n * FX_BTN_W + (n - 1) * FX_BTN_GAP;
         const bar = new Node('EffectBar');
         bar.layer = UI_LAYER;
-        bar.addComponent(UITransform).setContentSize(360, 56);
-        bar.setPosition(430, -300, 0);
+        bar.addComponent(UITransform).setContentSize(totalW, FX_BTN_H);
+        bar.setPosition(0, -300, 0);
         this.node.addChild(bar);
 
-        this.fxBurstBtn = this.createFxButton(bar, 'BtnBurst', '爆 裂', -90, 'burst');
-        this.fxShatterBtn = this.createFxButton(bar, 'BtnShatter', '碎 裂', 90, 'shatter');
+        FX_BUTTONS.forEach((def, i) => {
+            const x = -totalW / 2 + FX_BTN_W / 2 + i * (FX_BTN_W + FX_BTN_GAP);
+            this.fxButtons.push(this.createFxButton(bar, def.name, def.label, x, def.mode));
+        });
         this.refreshFxButtons();
     }
 
     /** 创建单个特效按钮（科技风背景 + 文字，返回按钮节点） */
-    private createFxButton(parent: Node, name: string, label: string, x: number, mode: 'burst' | 'shatter'): Node {
-        const w = 150;
-        const h = 52;
+    private createFxButton(parent: Node, name: string, label: string, x: number, mode: FxMode): Node {
+        const w = FX_BTN_W;
+        const h = FX_BTN_H;
         const btn = new Node(name);
         btn.layer = UI_LAYER;
         btn.setPosition(x, 0, 0);
@@ -164,7 +220,7 @@ export class Debug extends Component {
         labNode.addComponent(UITransform).setContentSize(w, h);
         const l = labNode.addComponent(Label);
         l.string = label;
-        l.fontSize = 26;
+        l.fontSize = 24;
         l.color = techTextColor('danger');
         l.horizontalAlign = Label.HorizontalAlign.CENTER;
         l.verticalAlign = Label.VerticalAlign.CENTER;
@@ -568,11 +624,11 @@ export class Debug extends Component {
     // ================= 爆炸 / 碎裂特效 =================
 
     /**
-     * 播放特效：把当前模型的网格按三角形分组碎裂成独立碎片，
-     * 隐藏原模型，碎片按模式（爆裂高速飞溅 / 碎裂塌落解体）运动，
+     * 播放特效：把当前模型的网格按三角形分组裂成独立碎片，
+     * 隐藏原模型，碎片按所选模式（爆裂/碎裂/汽化/黑洞/旋风/切割/熔陷）运动，
      * 播放完毕后恢复原模型。播放中/未选中模型时忽略点击。
      */
-    private playFx(mode: 'burst' | 'shatter'): void {
+    private playFx(mode: FxMode): void {
         if (this.fxRunning) {
             this.setStatus('特效播放中，请稍候…');
             return;
@@ -608,14 +664,12 @@ export class Debug extends Component {
         // 隐藏原模型，碎片接管展示
         model.active = false;
 
-        // 爆裂模式：中央闪光冲击波
-        if (mode === 'burst') this.createFlash();
+        // 爆裂/切割模式：中央能量闪光冲击波
+        if (mode === 'burst' || mode === 'slice') this.createFlash();
 
         this.fxRunning = true;
         this.refreshFxButtons();
-        this.setStatus(mode === 'burst'
-            ? `爆裂！模型裂成 ${this.shards.length} 块飞溅而出`
-            : `碎裂！模型裂成 ${this.shards.length} 块塌落解体`);
+        this.setStatus(`${FX_LABELS[mode]}！模型裂成 ${this.shards.length} 块${FX_VERBS[mode]}`);
     }
 
     /**
@@ -623,7 +677,7 @@ export class Debug extends Component {
      * （总量受 FX_MAX_SHARDS 限制）拆成多个小 Mesh，各自挂节点用渲染节点世界矩阵定位，
      * 并按模式赋予初速度与角速度。返回本次生成的碎片数。
      */
-    private extractShards(renderer: MeshRenderer, mode: 'burst' | 'shatter', shardRoot: Node, madeBefore: number): number {
+    private extractShards(renderer: MeshRenderer, mode: FxMode, shardRoot: Node, madeBefore: number): number {
         const mesh = renderer.mesh;
         if (!mesh) return 0;
         const mat = renderer.getMaterialInstance(0) ?? renderer.material;
@@ -713,22 +767,61 @@ export class Debug extends Component {
                 if (dir.lengthSqr() < 1e-4) dir.set(Math.random() - 0.5, Math.random(), Math.random() - 0.5);
                 dir.normalize();
 
-                // 初速度与角速度
+                // 初速度与角速度（按模式区分）
                 const vel = new Vec3();
                 const ang = new Vec3();
-                const maxLife = mode === 'burst' ? FX_BURST_LIFE : FX_SHATTER_LIFE;
-                if (mode === 'burst') {
-                    // 爆裂：高速飞溅 + 上扬 + 大随机扰动
-                    const speed = FX_BURST_SPEED * (0.55 + Math.random() * 0.75);
-                    vel.set(dir.x * speed, dir.y * speed * 0.7 + 160 * Math.random(), dir.z * speed);
-                    vel.x += (Math.random() - 0.5) * 160;
-                    vel.z += (Math.random() - 0.5) * 160;
-                    ang.set((Math.random() - 0.5) * 720, (Math.random() - 0.5) * 720, (Math.random() - 0.5) * 720);
-                } else {
-                    // 碎裂：低速塌落 + 打滚
-                    const speed = FX_SHATTER_SPEED * (0.4 + Math.random() * 0.8);
-                    vel.set(dir.x * speed + (Math.random() - 0.5) * 60, dir.y * speed * 0.5 + 40, dir.z * speed + (Math.random() - 0.5) * 60);
-                    ang.set((Math.random() - 0.5) * 260, (Math.random() - 0.5) * 260, (Math.random() - 0.5) * 260);
+                let maxLife: number;
+                switch (mode) {
+                    case 'burst':
+                        // 爆裂：高速飞溅 + 上扬 + 大随机扰动
+                        maxLife = FX_BURST_LIFE;
+                        {
+                            const speed = FX_BURST_SPEED * (0.55 + Math.random() * 0.75);
+                            vel.set(dir.x * speed, dir.y * speed * 0.7 + 160 * Math.random(), dir.z * speed);
+                            vel.x += (Math.random() - 0.5) * 160;
+                            vel.z += (Math.random() - 0.5) * 160;
+                            ang.set((Math.random() - 0.5) * 720, (Math.random() - 0.5) * 720, (Math.random() - 0.5) * 720);
+                        }
+                        break;
+                    case 'shatter':
+                        // 碎裂：低速塌落 + 打滚
+                        maxLife = FX_SHATTER_LIFE;
+                        {
+                            const speed = FX_SHATTER_SPEED * (0.4 + Math.random() * 0.8);
+                            vel.set(dir.x * speed + (Math.random() - 0.5) * 60, dir.y * speed * 0.5 + 40, dir.z * speed + (Math.random() - 0.5) * 60);
+                            ang.set((Math.random() - 0.5) * 260, (Math.random() - 0.5) * 260, (Math.random() - 0.5) * 260);
+                        }
+                        break;
+                    case 'vaporize':
+                        // 汽化：原位不动，仅微旋（缩小由 updateFx 统一驱动）
+                        maxLife = FX_VAPORIZE_LIFE;
+                        ang.set((Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40);
+                        break;
+                    case 'blackhole':
+                        // 黑洞：初速为 0，向心加速度在 updateFx 中持续施加
+                        maxLife = FX_BLACKHOLE_LIFE;
+                        ang.set((Math.random() - 0.5) * 300, (Math.random() - 0.5) * 300, (Math.random() - 0.5) * 300);
+                        break;
+                    case 'whirlwind':
+                        // 旋风：初速为 0，螺旋运动在 updateFx 中按位置旋转驱动
+                        maxLife = FX_WHIRLWIND_LIFE;
+                        ang.set((Math.random() - 0.5) * 300, (Math.random() - 0.5) * 300, (Math.random() - 0.5) * 300);
+                        break;
+                    case 'slice':
+                        // 切割：按所在侧（x 正负）反向分离，绕竖轴翻转
+                        maxLife = FX_SLICE_LIFE;
+                        {
+                            const sign = n.position.x >= 0 ? 1 : -1;
+                            const speed = FX_SLICE_SPEED * (0.7 + Math.random() * 0.6);
+                            vel.set(sign * speed, (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 20);
+                            ang.set(0, sign * (4 + Math.random() * 3), 0);
+                        }
+                        break;
+                    case 'sink':
+                        // 熔陷：初速为 0，垂直加速下沉（updateFx 中触底钳制）
+                        maxLife = FX_SINK_LIFE;
+                        ang.set((Math.random() - 0.5) * 60, (Math.random() - 0.5) * 60, (Math.random() - 0.5) * 60);
+                        break;
                 }
                 this.shards.push({ node: n, vel, ang, life: 0, maxLife, baseScale });
                 made++;
@@ -788,16 +881,67 @@ export class Debug extends Component {
                 sh.node.destroy();
                 continue;
             }
-            // 重力 + 位移（shardRoot 无附加变换，本地速度即世界速度）
-            sh.vel.y -= FX_GRAVITY * dt;
-            const p = sh.node.position;
-            sh.node.setPosition(p.x + sh.vel.x * dt, p.y + sh.vel.y * dt, p.z + sh.vel.z * dt);
-            const e = sh.node.eulerAngles;
-            sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
-            // 尾部 30% 生命周期开始缩小消失（在初始缩放基础上叠加）
             const k = sh.life / sh.maxLife;
-            if (k > 0.7) {
-                const s = 1 - (k - 0.7) / 0.3;
+            const p = sh.node.position;
+            const e = sh.node.eulerAngles;
+            switch (this.fxMode) {
+                case 'burst':
+                case 'shatter':
+                case 'slice':
+                    // 重力抛物线 + 位移（shardRoot 无附加变换，本地速度即世界速度）
+                    sh.vel.y -= FX_GRAVITY * dt;
+                    sh.node.setPosition(p.x + sh.vel.x * dt, p.y + sh.vel.y * dt, p.z + sh.vel.z * dt);
+                    sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
+                    break;
+                case 'vaporize':
+                    // 汽化：原位微旋，缩小在下方统一处理
+                    sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
+                    break;
+                case 'blackhole': {
+                    // 黑洞：朝 modelRoot 原点持续加速（速度钳制），靠近后越吸越快
+                    const to = new Vec3(-p.x, -p.y, -p.z);
+                    const d = to.length();
+                    if (d > 1) {
+                        to.multiplyScalar(1 / d);
+                        sh.vel.add(to.multiplyScalar(FX_BLACKHOLE_G * dt));
+                        const sp = sh.vel.length();
+                        if (sp > FX_BLACKHOLE_MAX_SPEED) sh.vel.multiplyScalar(FX_BLACKHOLE_MAX_SPEED / sp);
+                    }
+                    sh.node.setPosition(p.x + sh.vel.x * dt, p.y + sh.vel.y * dt, p.z + sh.vel.z * dt);
+                    sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
+                    break;
+                }
+                case 'whirlwind': {
+                    // 旋风：位置绕 y 轴螺旋旋转 + 上升 + 径向外扩
+                    const th = FX_WHIRLWIND_OMEGA * dt;
+                    const cos = Math.cos(th);
+                    const sin = Math.sin(th);
+                    const nx = p.x * cos - p.z * sin;
+                    const nz = p.x * sin + p.z * cos;
+                    const spread = 1 + FX_WHIRLWIND_SPREAD * dt;
+                    sh.node.setPosition(nx * spread, p.y + FX_WHIRLWIND_UP * dt, nz * spread);
+                    sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
+                    break;
+                }
+                case 'sink':
+                    // 熔陷：垂直加速下沉，触底后停住（缩小在下方按 80% 后处理）
+                    sh.vel.y -= FX_SINK_GRAVITY * dt;
+                    let ny = p.y + sh.vel.y * dt;
+                    if (ny < FX_SINK_FLOOR) {
+                        ny = FX_SINK_FLOOR;
+                        sh.vel.y = 0;
+                    }
+                    sh.node.setPosition(p.x, ny, p.z);
+                    sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
+                    break;
+            }
+            // 缩小消失：汽化全程线性缩小；熔陷触底后（80% 起）缩小；其余尾部 30% 缩小
+            if (this.fxMode === 'vaporize') {
+                const s = Math.max(0, 1 - k);
+                sh.node.setScale(sh.baseScale.x * s, sh.baseScale.y * s, sh.baseScale.z * s);
+            } else if (this.fxMode === 'sink' ? k > 0.8 : k > 0.7) {
+                const startK = this.fxMode === 'sink' ? 0.8 : 0.7;
+                const s = 1 - (k - startK) / (1 - startK);
                 sh.node.setScale(sh.baseScale.x * s, sh.baseScale.y * s, sh.baseScale.z * s);
             }
         }
