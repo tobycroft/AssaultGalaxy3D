@@ -138,8 +138,13 @@ export class Debug extends Component {
         sg.arc(0, 0, R + 12, Math.PI, Math.PI * 1.55);
         sg.stroke();
         ring.addChild(spin);
-        // 注意：3.x 的 Node 没有 angle 属性，绕 Z 轴旋转须 tween UITransform.angle
-        tween(spinUt).by(1.4, { angle: 360 }).repeatForever().start();
+        // 注意：3.x 的 Node/UITransform 均无 angle 属性，若直接 tween { angle } 目标属性
+        // 不存在会导致 tween-action 内部 keys 为 null 而崩溃；故 tween 普通状态对象，
+        // 每帧通过 setRotationFromEuler 回填旋转角实现持续旋转
+        const spinState = { angle: 0 };
+        tween(spinState).by(1.4, { angle: 360 }, {
+            onUpdate: (): void => spinUt.setRotationFromEuler(0, 0, spinState.angle),
+        }).repeatForever().start();
 
         // 进度文字
         const labNode = new Node('Progress');
