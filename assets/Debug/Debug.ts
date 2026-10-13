@@ -16,7 +16,9 @@ import {
     geometry,
     MeshRenderer,
     DirectionalLight,
+    tween,
 } from 'cc';
+import { fadeIn, fadeOutThen } from '../Common/UIAnim';
 
 const { ccclass } = _decorator;
 
@@ -27,6 +29,9 @@ const MODEL_LAYER = 1;
 
 // 预览时模型统一缩放到的大致尺寸（世界单位）
 const TARGET_MODEL_SIZE = 380;
+
+// 加载界面进度环半径
+const LOADING_RING_R = 40;
 
 // 模型分类展示名（key 为 resources/Model 下的一级目录名）
 const CATEGORY_NAMES: Record<string, string> = {
@@ -43,9 +48,17 @@ export class Debug extends Component {
     private statusLabel: Label | null = null;
     private modelButtonContainer: Node | null = null;
     private spin = true;
+    /** 加载界面根节点（模型加载期间展示，完成后销毁） */
+    private loadingNode: Node | null = null;
+    /** 加载界面进度环（Graphics） */
+    private loadingRing: Graphics | null = null;
+    /** 加载界面进度文字 */
+    private loadingLabel: Label | null = null;
 
     onLoad(): void {
         this.addLights();
+        // 先展示加载界面，再开始异步加载模型，避免进入后长时间空屏
+        this.createLoading();
         this.bindSceneUI();
         this.setupModelRoot();
         this.loadModels();
@@ -76,6 +89,115 @@ export class Debug extends Component {
         // 列表已按分类展示（各类自带标题），旧的固定标题改为通用文案
         const caption = canvas.getChildByName('ListCaption')?.getComponent(Label);
         if (caption) caption.string = '模型列表';
+    }
+
+    /**
+     * 创建加载界面：全屏半透明遮罩 + 进度环（底环/进度弧/外圈旋转装饰）+ 进度文字。
+     * 模型异步加载期间展示，加载完成后由 hideLoading() 淡出销毁。
+     */
+    private createLoading(): void {
+        const canvas = this.node;
+        const layer = canvas.layer;
+
+        const root = new Node('Loading');
+        root.layer = layer;
+        root.addComponent(UITransform).setContentSize(1280, 720);
+        canvas.addChild(root);
+        this.loadingNode = root;
+
+        // 半透明深色遮罩：盖住下层 UI，加载期间不可交互
+        const mask = new Node('Mask');
+        mask.layer = layer;
+        mask.addComponent(UITransform).setContentSize(1280, 720);
+        const mg = mask.addComponent(Graphics);
+        mg.fillColor = new Color(8, 14, 26, 220);
+        mg.fillRect(-640, -360, 1280, 720);
+        root.addChild(mask);
+
+        // 进度环
+        const ring = new Node('Ring');
+        ring.layer = layer;
+        ring.setPosition(0, 50, 0);
+        ring.addComponent(UITransform).setContentSize(120, 120);
+        this.loadingRing = ring.addComponent(Graphics);
+        this.drawLoadingRing(0);
+        root.addChild(ring);
+
+        // 外圈旋转装饰弧（两段错位弧线，持续旋转表示“进行中”）
+        const spin = new Node('Spin');
+        spin.layer = layer;
+        spin.addComponent(UITransform).setContentSize(120, 120);
+        const sg = spin.addComponent(Graphics);
+        const R = LOADING_RING_R;
+        sg.strokeColor = new Color(0, 214, 255, 120);
+        sg.lineWidth = 3;
+        sg.arc(0, 0, R + 12, 0, Math.PI * 0.55);
+        sg.stroke();
+        sg.strokeColor = new Color(120, 200, 255, 80);
+        sg.arc(0, 0, R + 12, Math.PI, Math.PI * 1.55);
+        sg.stroke();
+        ring.addChild(spin);
+        tween(spin).by(1.4, { angle: 360 }).repeatForever().start();
+
+        // 进度文字
+        const labNode = new Node('Progress');
+        labNode.layer = layer;
+        labNode.setPosition(0, -45, 0);
+        labNode.addComponent(UITransform).setContentSize(600, 40);
+        const l = labNode.addComponent(Label);
+        l.fontSize = 26;
+        l.color = new Color(200, 232, 255, 255);
+        l.horizontalAlign = Label.HorizontalAlign.CENTER;
+        l.verticalAlign = Label.VerticalAlign.CENTER;
+        l.string = '正在加载模型…';
+        root.addChild(labNode);
+        this.loadingLabel = l;
+    }
+
+    /** 更新加载进度：重绘进度弧并刷新文字（loaded/total） */
+    private updateLoading(loaded: number, total: number): void {
+        const p = total > 0 ? loaded / total : 0;
+        this.drawLoadingRing(p);
+        if (this.loadingLabel) {
+            this.loadingLabel.string = `正在加载模型 ${loaded} / ${total}`;
+        }
+    }
+
+    /** 绘制进度环：灰色底环 + 青色进度弧（12 点方向起笔，顺时针） */
+    private drawLoadingRing(progress: number): void {
+        const g = this.loadingRing;
+        if (!g) return;
+        const R = LOADING_RING_R;
+        g.clear();
+        // 底环
+        g.strokeColor = new Color(50, 80, 110, 255);
+        g.lineWidth = 6;
+        g.arc(0, 0, R, 0, Math.PI * 2, true);
+        g.stroke();
+        // 进度弧
+        const p = Math.max(0, Math.min(1, progress));
+        if (p > 0.0001) {
+            g.strokeColor = new Color(0, 214, 255, 255);
+            g.lineWidth = 6;
+            g.arc(0, 0, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * p);
+            g.stroke();
+        }
+    }
+
+    /** 隐藏加载界面：淡出后销毁，then 回调在销毁后执行（需自行校验组件有效性） */
+    private hideLoading(then?: () => void): void {
+        const root = this.loadingNode;
+        if (!root) {
+            then?.();
+            return;
+        }
+        this.loadingNode = null;
+        this.loadingRing = null;
+        this.loadingLabel = null;
+        fadeOutThen(root, 0.25, () => {
+            root.destroy();
+            then?.();
+        });
     }
 
     /**
