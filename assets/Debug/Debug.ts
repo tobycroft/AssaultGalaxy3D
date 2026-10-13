@@ -16,7 +16,6 @@ import {
     geometry,
     MeshRenderer,
     DirectionalLight,
-    tween,
 } from 'cc';
 import { fadeIn, fadeOutThen } from '../Common/UIAnim';
 
@@ -54,6 +53,10 @@ export class Debug extends Component {
     private loadingRing: Graphics | null = null;
     /** 加载界面进度文字 */
     private loadingLabel: Label | null = null;
+    /** 加载界面外圈旋转装饰节点（隐藏后置空，update 据此停止旋转） */
+    private spinNode: Node | null = null;
+    /** 装饰弧当前旋转角（度），由 update 逐帧累加 */
+    private spinAngle = 0;
 
     onLoad(): void {
         this.addLights();
@@ -65,6 +68,11 @@ export class Debug extends Component {
     }
 
     update(dt: number): void {
+        // 加载界面装饰弧持续旋转（加载完成/场景切换后 spinNode 置空即停）
+        if (this.spinNode) {
+            this.spinAngle = (this.spinAngle + dt * 260) % 360;
+            this.spinNode.setRotationFromEuler(0, 0, this.spinAngle);
+        }
         if (this.spin && this.currentModel) {
             this.currentModel.rotate(Quat.fromAxisAngle(new Quat(), Vec3.UP, dt * 0.6));
         }
@@ -137,13 +145,9 @@ export class Debug extends Component {
         sg.arc(0, 0, R + 12, Math.PI, Math.PI * 1.55);
         sg.stroke();
         ring.addChild(spin);
-        // 注意：3.x 的 Node/UITransform 均无 angle 属性，若直接 tween { angle } 目标属性
-        // 不存在会导致 tween-action 内部 keys 为 null 而崩溃；故 tween 普通状态对象，
-        // 每帧通过 Node.setRotationFromEuler 回填旋转角实现持续旋转
-        const spinState = { angle: 0 };
-        tween(spinState).by(1.4, { angle: 360 }, {
-            onUpdate: (): void => spin.setRotationFromEuler(0, 0, spinState.angle),
-        }).repeatForever().start();
+        // 旋转由 update(dt) 手动驱动（字段引用），不用 tween：
+        // 避免节点销毁后 tween 仍在回调中访问已毁节点导致崩溃
+        this.spinNode = spin;
 
         // 进度文字
         const labNode = new Node('Progress');
@@ -202,6 +206,8 @@ export class Debug extends Component {
         this.loadingLabel = null;
         fadeOutThen(root, 0.25, () => {
             root.destroy();
+            // 节点销毁后必须断引用，否则 update 继续访问已毁节点会崩溃
+            this.spinNode = null;
             then?.();
         });
     }
