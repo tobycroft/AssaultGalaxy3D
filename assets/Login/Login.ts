@@ -1,6 +1,6 @@
 import { _decorator, Color, Component, director, EditBox, Graphics, Label, Node, UITransform, Vec3 } from 'cc';
 import { fadeIn, pressEffect } from '../Common/UIAnim';
-import { login, register, AuthUser } from '../Common/Api';
+import { login, register, userInfo, AuthUser, UserInfo } from '../Common/Api';
 import { Session } from '../Common/Session';
 
 /** 认证模式：登录 / 注册 */
@@ -38,6 +38,31 @@ export class Login extends Component {
         this.build();
         this.applyMode();
         fadeIn(this.node, new Vec3(0, 30, 0), 0, 0.25);
+        // 本地已有 uid+token 时，先用 user/info 校验登录态，通过才进入首页
+        this.tryResumeSession();
+    }
+
+    /**
+     * 断点续登：本地已有 uid+token 时调用 user/info 校验登录态。
+     * code=0 → 刷新用户名并进入首页；否则清登录态停留在登录页（网络错误仅提示，不清态）。
+     */
+    private async tryResumeSession(): Promise<void> {
+        if (!Session.isLoggedIn()) return;
+        this.setMessage('正在验证登录态…');
+        try {
+            const resp = await userInfo(Session.getUid(), Session.getToken());
+            if (resp.code === 0) {
+                const info = resp.data as UserInfo | undefined;
+                const name = info && typeof info.username === 'string' ? info.username : '';
+                if (name) Session.setUsername(name);
+                director.loadScene('Home');
+            } else {
+                Session.clear();
+                this.setMessage(resp.echo || '登录已失效，请重新登录');
+            }
+        } catch (e) {
+            this.setMessage('网络错误：' + (e as Error).message);
+        }
     }
 
     /** 构建登录/注册页面 UI */
@@ -93,14 +118,6 @@ export class Login extends Component {
         // 状态/错误提示
         this.msgLabel = this.createLabel(card, 'Message', '', 0, -165, 22, BTN_INACTIVE);
         this.msgLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
-
-        // 返回首页按钮
-        const backBtn = this.createButton(card, 'Back', '← 返回首页', cardW / 2 - 70, cardH / 2 - 30, 140, 40, () => {
-            director.loadScene('Home');
-        });
-        pressEffect(backBtn);
-        const bl = backBtn.getChildByName('Label')!.getComponent(Label)!;
-        bl.color = BTN_INACTIVE;
     }
 
     /** 根据当前模式刷新标题、按钮与切换文案 */
@@ -141,7 +158,11 @@ export class Login extends Component {
             if (resp.code === 0 && resp.data && (resp.data as AuthUser).token) {
                 const user = resp.data as AuthUser;
                 const uname = user.username || username;
-                Session.save({ username: uname, token: user.token });
+                Session.save({
+                    uid: user.id != null ? String(user.id) : '',
+                    username: uname,
+                    token: user.token,
+                });
                 this.setMessage('成功：' + (resp.echo || 'OK'));
                 // 1 秒后返回首页
                 this.scheduleOnce(() => director.loadScene('Home'), 1);

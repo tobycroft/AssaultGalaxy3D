@@ -18,6 +18,11 @@ export class Home extends Component {
     start(): void {
         SettingsStore.applyGraphics();
         MusicManager.init();
+        // 未登录一律回到登录页（登录态已在 Login 场景通过 user/info 校验）
+        if (!Session.isLoggedIn()) {
+            director.loadScene('Login');
+            return;
+        }
         this.playEnterAnim();
         this.createMusicToggle();
         this.bindSettingsButton();

@@ -51,3 +51,39 @@ export function postForm<T = unknown>(
         xhr.send(body);
     });
 }
+
+/**
+ * 发起带鉴权 Header 的 GET 请求（uid/token）。
+ * 后端 HeaderAuthMode=true，鉴权信息放在 Header 中（见 /v1/user/info）。
+ * @param path  接口路径，例如 /v1/user/info
+ * @param auth  { uid, token }
+ */
+export function getWithAuth<T = unknown>(
+    path: string,
+    auth: { uid: string; token: string },
+): Promise<ApiEnvelope<T>> {
+    return new Promise<ApiEnvelope<T>>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', API_BASE + path, true);
+        xhr.setRequestHeader('uid', auth.uid);
+        xhr.setRequestHeader('token', auth.token);
+
+        xhr.onreadystatechange = (): void => {
+            if (xhr.readyState !== 4) return;
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                    resolve(JSON.parse(xhr.responseText) as ApiEnvelope<T>);
+                } catch (e) {
+                    reject(new Error('返回数据解析失败: ' + xhr.responseText));
+                }
+            } else {
+                reject(new Error(`网络错误 HTTP ${xhr.status}`));
+            }
+        };
+        xhr.onerror = (): void => {
+            reject(new Error('网络请求失败，请检查网络或服务器地址'));
+        };
+
+        xhr.send();
+    });
+}

@@ -221,10 +221,10 @@ export class Settings extends Component {
         this.logoutBtn.active = loggedIn;
     }
 
-    /** 退出登录：清空会话并返回首页（首页切换为未登录态） */
+    /** 退出登录：清空会话并回到登录页（未登录统一停留在登录界面） */
     private onLogout(): void {
         Session.clear();
-        fadeOutThen(this.node, 0.2, () => director.loadScene('Home'));
+        fadeOutThen(this.node, 0.2, () => director.loadScene('Login'));
     }
 
     /** 背景音乐音量行：标题 + 滑块 + 百分比，拖动即时生效并持久化 */
