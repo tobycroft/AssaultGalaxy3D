@@ -2,6 +2,7 @@ import { _decorator, Component, director, Node, Vec3, Color, UITransform, Graphi
 import { fadeIn, fadeOutThen, popIn, pressEffect } from '../Common/UIAnim';
 import { MusicManager } from '../Common/MusicManager';
 import { SettingsStore } from '../Common/SettingsStore';
+import { Session } from '../Common/Session';
 
 const { ccclass } = _decorator;
 
@@ -113,10 +114,15 @@ export class Home extends Component {
         fadeIn(btn, new Vec3(0, 30, 0), 0.5);
     }
 
-    /** 登录/注册入口：底部按钮，点击切换到独立的 Login 场景（不在 Home 内实现） */
+    /** 登录/注册入口：已登录则在左上角显示用户名，否则底部显示登录/注册按钮 */
     private bindLoginEntry(): void {
         const canvas = this.node.parent;
         if (!canvas) return;
+        // 已登录：左上角展示当前用户名（退出登录后回到首页会自动消失）
+        if (Session.isLoggedIn()) {
+            this.showUserBadge(canvas);
+            return;
+        }
         const btn = this.createEntryButton(
             canvas,
             'BtnLoginEntry',
@@ -129,6 +135,38 @@ export class Home extends Component {
         );
         pressEffect(btn);
         fadeIn(btn, new Vec3(0, 30, 0), 0.5);
+    }
+
+    /** 已登录时在左上角显示当前用户名（样式对齐右上角音乐开关） */
+    private showUserBadge(canvas: Node): void {
+        const raw = Session.getUsername() || '已登录';
+        const name = raw.length > 12 ? `${raw.slice(0, 12)}…` : raw;
+        const w = 280;
+        const h = 52;
+
+        const badge = new Node('UserBadge');
+        badge.layer = canvas.layer;
+        badge.setPosition(-520, 320, 0);
+        const ut = badge.addComponent(UITransform);
+        ut.setContentSize(w, h);
+        const g = badge.addComponent(Graphics);
+        g.fillColor = new Color(30, 48, 78, 255);
+        g.roundRect(-w / 2, -h / 2, w, h, 10);
+        g.fill();
+
+        const labNode = new Node('Label');
+        labNode.layer = canvas.layer;
+        labNode.addComponent(UITransform).setContentSize(w, h);
+        const l = labNode.addComponent(Label);
+        l.string = name;
+        l.fontSize = 24;
+        l.color = new Color(200, 220, 255, 255);
+        l.horizontalAlign = Label.HorizontalAlign.CENTER;
+        l.verticalAlign = Label.VerticalAlign.CENTER;
+        badge.addChild(labNode);
+
+        canvas.addChild(badge);
+        fadeIn(badge, new Vec3(-30, 0, 0), 0.5);
     }
 
     /** 自绘圆角按钮（风格对齐 Settings.ts），点击后带淡出切换场景 */
