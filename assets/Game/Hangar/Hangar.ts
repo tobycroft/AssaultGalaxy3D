@@ -1,7 +1,6 @@
 import {
     _decorator,
     Component,
-    director,
     Node,
     resources,
     Prefab,
@@ -18,7 +17,7 @@ import {
     DirectionalLight,
     Camera,
 } from 'cc';
-import { fadeIn, fadeOutThen, pressEffect } from '../../Common/UIAnim';
+import { fadeIn, pressEffect } from '../../Common/UIAnim';
 import { paintTechButton, TechText, techTextColor } from '../../Common/TechUI';
 
 const { ccclass } = _decorator;
@@ -37,7 +36,7 @@ const BG_COLOR = new Color(10, 18, 32, 255);
 /**
  * 停机库（Hangar）：游戏入口流程的第二站（Intro 开场动画之后）。
  * 中央展示台自动旋转展示 spaceship 目录下的飞机模型，
- * 底部一排飞机按钮可切换展示，左上角返回首页。
+ * 底部一排飞机按钮可切换展示。进入游戏后不再提供返回首页入口。
  */
 @ccclass('Hangar')
 export class Hangar extends Component {
@@ -114,7 +113,7 @@ export class Hangar extends Component {
         this.node.addChild(ring);
     }
 
-    /** 标题 / 状态 / 返回按钮 */
+    /** 标题 / 状态 */
     private buildUI(): void {
         // 标题
         const title = new Node('Title');
@@ -142,12 +141,6 @@ export class Hangar extends Component {
         sl.verticalAlign = Label.VerticalAlign.CENTER;
         this.node.addChild(status);
         this.statusLabel = sl;
-
-        // 返回首页按钮（左上角）
-        const back = this.createButton('BtnBack', '返 回', -520, 296, 200, 52, () => {
-            this.leave();
-        });
-        pressEffect(back);
     }
 
     /**
@@ -293,11 +286,6 @@ export class Hangar extends Component {
 
     private setStatus(msg: string): void {
         if (this.statusLabel) this.statusLabel.string = msg;
-    }
-
-    /** 返回首页（淡出过渡） */
-    private leave(): void {
-        fadeOutThen(this.node, 0.25, () => director.loadScene('Home'));
     }
 
     /**
