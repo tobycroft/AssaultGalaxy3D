@@ -5,6 +5,7 @@ import { SettingsStore } from '../Common/SettingsStore';
 import { Session } from '../Common/Session';
 import { isIntroPlayed } from '../Boot/BootFlow';
 import { paintTechButton, paintTechInput, TechButtonKind, TechText, techTextColor } from '../Common/TechUI';
+import { NewsDialog } from './NewsDialog';
 
 const { ccclass } = _decorator;
 
@@ -33,6 +34,7 @@ export class Home extends Component {
             return;
         }
         this.restyleMenuButtons();
+        this.createNewsButton();
         this.playEnterAnim();
         this.createMusicToggle();
         this.bindLoginEntry();
@@ -166,6 +168,24 @@ export class Home extends Component {
 
         canvas.addChild(badge);
         fadeIn(badge, new Vec3(-30, 0, 0), 0.5);
+    }
+
+    /** 菜单内「新闻」按钮：打开新闻公告弹窗（公开接口，无需登录） */
+    private createNewsButton(): void {
+        const panel = this.node.parent?.getChildByName('MenuPanel');
+        if (!panel || panel.getChildByName('BtnNews')) return;
+        const btn = this.createEntryButton(
+            panel,
+            'BtnNews',
+            '新闻',
+            0,
+            -55,
+            240,
+            64,
+            (): void => { NewsDialog.open(this.node.parent!); },
+            'ghost',
+        );
+        pressEffect(btn);
     }
 
     /** 自绘圆角按钮（风格对齐 Settings.ts），点击后带淡出切换场景 */

@@ -1,4 +1,4 @@
-import { postForm, getWithAuth, ApiEnvelope } from './Http';
+import { postForm, get, getWithAuth, ApiEnvelope } from './Http';
 
 /** 登录/注册成功后返回的用户信息（后端 data 字段） */
 export interface AuthUser {
@@ -49,4 +49,50 @@ export function login(
  */
 export function userInfo(uid: string, token: string): Promise<ApiEnvelope<UserInfo>> {
     return getWithAuth<UserInfo>('/v1/user/info', { uid, token });
+}
+
+/** 新闻列表项（对应后端 ag_news，列表接口不含 content） */
+export interface NewsItem {
+    /** 新闻 ID，详情接口用它换取正文 */
+    id: number;
+    /** 标题 */
+    title: string;
+    /** 列表摘要 */
+    summary: string;
+    /** 发布时间（后端 time.Time 序列化，ISO8601 格式字符串） */
+    publish_time: string;
+}
+
+/** 新闻详情（含富文本正文 content） */
+export interface NewsDetail extends NewsItem {
+    /** 富文本正文 */
+    content: string;
+}
+
+/** /v1/news/list 的 data 结构 */
+export interface NewsListData {
+    /** 当前页数据 */
+    list: NewsItem[];
+    /** 已发布新闻总数 */
+    total: number;
+    /** 当前页码 */
+    page: number;
+    /** 每页数量 */
+    page_size: number;
+}
+
+/**
+ * 获取新闻列表（公开接口，无需登录）。
+ * 对应后端 GET /v1/news/list，只返回已发布（status=1）的新闻，不含正文。
+ */
+export function newsList(page = 1, pageSize = 10): Promise<ApiEnvelope<NewsListData>> {
+    return get<NewsListData>('/v1/news/list', { page, page_size: pageSize });
+}
+
+/**
+ * 获取新闻详情（公开接口，无需登录）。
+ * 对应后端 GET /v1/news/detail，code=0 成功；code=404 表示新闻不存在或未发布。
+ */
+export function newsDetail(id: number): Promise<ApiEnvelope<NewsDetail>> {
+    return get<NewsDetail>('/v1/news/detail', { id });
 }

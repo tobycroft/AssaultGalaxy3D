@@ -99,6 +99,31 @@ export function paintTechInput(g: Graphics, w: number, h: number): void {
     g.fill();
 }
 
+/** 绘制科技感弹窗面板（深色底 + 霓虹描边 + 顶部高光条 + 左上角亮块） */
+export function paintTechPanel(g: Graphics, w: number, h: number, radius = 18): void {
+    const x0 = -w / 2;
+    const y0 = -h / 2;
+
+    g.clear();
+    // 深色底
+    g.fillColor = new Color(13, 24, 42, 248);
+    g.roundRect(x0, y0, w, h, radius);
+    g.fill();
+    // 霓虹描边
+    g.strokeColor = new Color(0, 190, 230, 230);
+    g.lineWidth = 2;
+    g.roundRect(x0, y0, w, h, radius);
+    g.stroke();
+    // 顶部内高光条
+    g.fillColor = new Color(0, 214, 255, 70);
+    g.roundRect(x0 + radius + 6, y0 + h - 5, w - (radius + 6) * 2, 3, 1);
+    g.fill();
+    // 左上角 HUD 亮块
+    g.fillColor = new Color(125, 240, 255, 255);
+    g.roundRect(x0 + 16, y0 + h - 14, 26, 3, 1);
+    g.fill();
+}
+
 /** 按风格返回默认文字颜色 */
 export function techTextColor(kind: TechButtonKind): Color {
     if (kind === 'danger') return TechText.danger;
