@@ -20,6 +20,7 @@ import {
 } from 'cc';
 import { fadeIn, pressEffect } from '../../Common/UIAnim';
 import { paintTechButton, TechText, techTextColor } from '../../Common/TechUI';
+import { ExitOnBack } from '../../Common/ExitOnBack';
 
 const { ccclass } = _decorator;
 
@@ -59,6 +60,8 @@ export class Hangar extends Component {
         this.buildUI();
         this.setupModelRoot();
         this.loadShips();
+        // 游戏内退出监听：Android 返回键 / ESC 触发确认退出弹窗
+        this.node.addComponent(ExitOnBack);
     }
 
     update(dt: number): void {

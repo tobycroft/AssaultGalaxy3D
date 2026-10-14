@@ -263,7 +263,14 @@ export class Login extends Component {
         node.setPosition(x, y, 0);
         node.addComponent(UITransform).setContentSize(w, h);
 
-        paintTechInput(node.addComponent(Graphics), w, h);
+        // 背景必须挂在子节点上：EditBox 启用时会自动给自身节点 addComponent(Sprite)
+        // 作为背景（引擎 _ensureBackgroundSprite），与同节点的 Graphics 冲突，
+        // 编辑器内预览会报 "Can't add component 'cc.Sprite' ... conflicts with 'cc.Graphics'"。
+        const bgNode = new Node('Background');
+        bgNode.layer = UI_LAYER;
+        bgNode.addComponent(UITransform).setContentSize(w, h);
+        paintTechInput(bgNode.addComponent(Graphics), w, h);
+        node.addChild(bgNode);
 
         const editBox = node.addComponent(EditBox);
 
