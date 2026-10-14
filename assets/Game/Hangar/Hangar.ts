@@ -1,6 +1,7 @@
 import {
     _decorator,
     Component,
+    director,
     Node,
     resources,
     Prefab,
