@@ -1,6 +1,8 @@
 import { _decorator, Component, director, Node, Vec3, Color, Label, UITransform, Graphics, UIOpacity } from 'cc';
 import { fadeIn, fadeOutThen } from '../../Common/UIAnim';
 import { TechText } from '../../Common/TechUI';
+import { preheatModels } from '../ModelPreheater';
+import { markIntroPlayed } from '../BootFlow';
 
 const { ccclass } = _decorator;
 
@@ -14,8 +16,10 @@ const TYPE_INTERVAL = 0.07;
 const STAR_COUNT = 30;
 
 /**
- * 游戏开场 Intro：深色星空背景 + 游戏名称打字机逐字浮现 + 点击继续。
- * 播放完毕后点击屏幕淡出，暂回首页（游戏主场景建成后改为跳转主场景）。
+ * 游戏开场 Intro：游戏启动时的第一个场景。
+ * 深色星空背景 + 游戏名称打字机逐字浮现 + 点击继续；
+ * 打字期间后台静默预热 resources/Model 下全部模型（隐式，无 UI 反馈），
+ * 播放完毕点击屏幕淡出进入首页（未登录由 Home 自动跳转登录页）。
  */
 @ccclass('Intro')
 export class Intro extends Component {
@@ -37,10 +41,16 @@ export class Intro extends Component {
     private leaving = false;
 
     start(): void {
+        // 记录本次运行 Intro 已播放（Home 据此不再重定向回来）
+        markIntroPlayed();
+
         this.buildBackground();
         this.buildDecoLine();
         this.buildTitle();
         this.buildTip();
+
+        // 打字展示期间后台隐式预热全部模型（不阻塞、无 UI）
+        preheatModels();
 
         // 点击任意处继续（打字中也可点击跳过等待）
         this.node.on(Node.EventType.TOUCH_END, () => this.leave(), this);
@@ -157,10 +167,10 @@ export class Intro extends Component {
         this.tipOpacity.opacity = 0;
     }
 
-    /** 退出 Intro：整体淡出后进入停机库（游戏入口流程的下一站） */
+    /** 退出 Intro：整体淡出后进入首页（未登录时由 Home 自动跳转登录页） */
     private leave(): void {
         if (this.leaving) return;
         this.leaving = true;
-        fadeOutThen(this.node, 0.4, () => director.loadScene('Hangar'));
+        fadeOutThen(this.node, 0.4, () => director.loadScene('Home'));
     }
 }

@@ -3,6 +3,7 @@ import { fadeIn, fadeOutThen, popIn, pressEffect } from '../Common/UIAnim';
 import { MusicManager } from '../Common/MusicManager';
 import { SettingsStore } from '../Common/SettingsStore';
 import { Session } from '../Common/Session';
+import { isIntroPlayed } from '../Boot/BootFlow';
 import { paintTechButton, paintTechInput, TechButtonKind, TechText, techTextColor } from '../Common/TechUI';
 
 const { ccclass } = _decorator;
@@ -19,6 +20,11 @@ export class Home extends Component {
     private exitConfirmNode: Node | null = null;
 
     start(): void {
+        // 开场 Intro 尚未播放（预览/构建包以 Home 为启动场景时）先跳 Intro 播放开场
+        if (!isIntroPlayed()) {
+            director.loadScene('Intro');
+            return;
+        }
         SettingsStore.applyGraphics();
         MusicManager.init();
         // 未登录一律回到登录页（登录态已在 Login 场景通过 user/info 校验）
@@ -205,8 +211,8 @@ export class Home extends Component {
         const canvas = this.node.parent;
         const panel = canvas?.getChildByName('MenuPanel');
         const targets: { node: Node | null | undefined; kind: TechButtonKind; onClick?: () => void }[] = [
-            // 进入游戏：先进入 Game/Intro 开场动画场景
-            { node: panel?.getChildByName('BtnStart'), kind: 'primary', onClick: () => this.switchScene('Intro') },
+            // 进入游戏：直接进停机库（Intro 开场已在游戏启动时播放过）
+            { node: panel?.getChildByName('BtnStart'), kind: 'primary', onClick: () => this.switchScene('Hangar') },
             { node: panel?.getChildByName('BtnSettings'), kind: 'primary', onClick: () => this.onSettingsClick() },
             { node: panel?.getChildByName('BtnExit'), kind: 'danger', onClick: () => this.openExitConfirm() },
             // BtnDebug 的点击由场景中 Button 的 clickEvents 绑定（onDebugClick），此处只补样式与悬停
