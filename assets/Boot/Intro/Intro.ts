@@ -17,9 +17,9 @@ const STAR_COUNT = 30;
 
 /**
  * 游戏开场 Intro：游戏启动时的第一个场景。
- * 深色星空背景 + 游戏名称打字机逐字浮现 + 点击继续；
- * 打字期间后台静默预热 resources/Model 下全部模型（隐式，无 UI 反馈），
- * 播放完毕点击屏幕淡出进入首页（未登录由 Home 自动跳转登录页）。
+ * 第一阶段：进度条显式展示模型预热加载（百分比 + 青色填充条）；
+ * 第二阶段：加载完成后打字机动画登场，最后出现点击继续，点击屏幕淡出进入首页
+ * （未登录由 Home 自动跳转登录页）。加载完成前点击不生效。
  */
 @ccclass('Intro')
 export class Intro extends Component {
@@ -39,24 +39,34 @@ export class Intro extends Component {
     private tipElapsed = -1;
     /** 是否已触发退出（防重复点击） */
     private leaving = false;
+    /** 模型预热是否完成（完成前不启动动画、点击不生效） */
+    private preheatDone = false;
+
+    /** 进度条节点引用 */
+    private loadingRoot: Node | null = null;
+    /** 进度条填充 Graphics（按进度重绘） */
+    private barFill: Graphics | null = null;
+    /** 进度百分比文字 */
+    private barLabel: Label | null = null;
+    /** 已绘制的进度（0~1），避免同值重绘 */
+    private drawnProgress = -1;
 
     start(): void {
         // 记录本次运行 Intro 已播放（Home 据此不再重定向回来）
         markIntroPlayed();
 
         this.buildBackground();
-        this.buildDecoLine();
-        this.buildTitle();
-        this.buildTip();
+        this.buildLoading();
 
-        // 打字展示期间后台隐式预热全部模型（不阻塞、无 UI）
-        preheatModels();
-
-        // 点击任意处继续（打字中也可点击跳过等待）
-        this.node.on(Node.EventType.TOUCH_END, () => this.leave(), this);
+        // 先预热模型（进度条驱动），完成后才启动开场动画
+        preheatModels(
+            (loaded, total) => this.onPreheatProgress(loaded, total),
+            () => this.onPreheatDone(),
+        );
     }
 
     update(dt: number): void {
+        if (!this.preheatDone) return;
         this.elapsed += dt;
 
         // 打字机：延迟后逐字显示游戏名
@@ -84,6 +94,110 @@ export class Intro extends Component {
                 this.tipOpacity.opacity = 150 + Math.round(105 * Math.sin((this.tipElapsed - 0.3) * 3));
             }
         }
+    }
+
+    // ==================== 第一阶段：加载进度 ====================
+
+    /** 构建进度条 UI：说明文字 + 轨道 + 填充 + 百分比 */
+    private buildLoading(): void {
+        const root = new Node('Loading');
+        root.layer = this.node.layer;
+        root.setPosition(0, -20, 0);
+        root.addComponent(UITransform).setContentSize(560, 80);
+        this.node.addChild(root);
+        this.loadingRoot = root;
+
+        // 说明文字
+        const cap = new Node('Caption');
+        cap.layer = this.node.layer;
+        cap.setPosition(0, 24, 0);
+        cap.addComponent(UITransform).setContentSize(560, 30);
+        const cl = cap.addComponent(Label);
+        cl.string = '星图数据同步中…';
+        cl.fontSize = 22;
+        cl.color = TechText.dim;
+        cl.horizontalAlign = Label.HorizontalAlign.CENTER;
+        cl.verticalAlign = Label.VerticalAlign.CENTER;
+        root.addChild(cap);
+
+        // 进度轨道（深色圆角槽 + 青色描边）
+        const track = new Node('Track');
+        track.layer = this.node.layer;
+        track.addComponent(UITransform).setContentSize(520, 16);
+        const tg = track.addComponent(Graphics);
+        tg.fillColor = new Color(11, 24, 43, 245);
+        tg.roundRect(-260, -8, 520, 16, 8);
+        tg.fill();
+        tg.strokeColor = new Color(0, 190, 230, 220);
+        tg.lineWidth = 2;
+        tg.roundRect(-260, -8, 520, 16, 8);
+        tg.stroke();
+        root.addChild(track);
+
+        // 填充条：独立子节点，按进度整体缩放（圆角随缩放形变，故用固定宽+遮罩式裁剪）
+        const fill = new Node('Fill');
+        fill.layer = this.node.layer;
+        fill.addComponent(UITransform).setContentSize(516, 12);
+        const fg = fill.addComponent(Graphics);
+        fg.fillColor = new Color(0, 214, 255, 255);
+        fg.roundRect(-258, -6, 516, 12, 6);
+        fg.fill();
+        // 用锚点左对齐：初始缩放 0 表示 0%，重绘宽度实现进度
+        fill.setPosition(0, 0, 0);
+        track.addChild(fill);
+        this.barFill = fg;
+
+        // 百分比
+        const pct = new Node('Percent');
+        pct.layer = this.node.layer;
+        pct.setPosition(0, -32, 0);
+        pct.addComponent(UITransform).setContentSize(200, 28);
+        const pl = pct.addComponent(Label);
+        pl.string = '0%';
+        pl.fontSize = 20;
+        pl.color = TechText.caption;
+        pl.horizontalAlign = Label.HorizontalAlign.CENTER;
+        pl.verticalAlign = Label.VerticalAlign.CENTER;
+        root.addChild(pct);
+        this.barLabel = pl;
+    }
+
+    /** 预热进度回调：重绘填充条与百分比文字 */
+    private onPreheatProgress(loaded: number, total: number): void {
+        const p = total > 0 ? loaded / total : 1;
+        if (Math.abs(p - this.drawnProgress) < 0.005) return;
+        this.drawnProgress = p;
+        const w = Math.round(516 * p);
+        if (this.barFill) {
+            this.barFill.clear();
+            if (w > 0) {
+                this.barFill.fillColor = new Color(0, 214, 255, 255);
+                this.barFill.roundRect(-258, -6, w, 12, 6);
+                this.barFill.fill();
+            }
+        }
+        if (this.barLabel) this.barLabel.string = `${Math.round(p * 100)}%`;
+    }
+
+    /** 预热完成：撤掉进度条，启动开场动画并开放点击继续 */
+    private onPreheatDone(): void {
+        if (this.preheatDone) return;
+        this.preheatDone = true;
+        this.onPreheatProgress(1, 1);
+
+        // 进度条淡出后移除，再启动打字机动画
+        const root = this.loadingRoot;
+        const startAnim = (): void => {
+            if (root && root.isValid) root.destroy();
+            this.loadingRoot = null;
+            this.buildDecoLine();
+            this.buildTitle();
+            this.buildTip();
+            // 点击任意处继续（打字中也可点击跳过等待）
+            this.node.on(Node.EventType.TOUCH_END, () => this.leave(), this);
+        };
+        if (root) fadeOutThen(root, 0.3, startAnim);
+        else startAnim();
     }
 
     /** 深色星空背景：纯色底 + 随机星点 */
