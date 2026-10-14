@@ -16,6 +16,7 @@ import {
     geometry,
     MeshRenderer,
     DirectionalLight,
+    Camera,
 } from 'cc';
 import { fadeIn, fadeOutThen, pressEffect } from '../../Common/UIAnim';
 import { paintTechButton, TechText, techTextColor } from '../../Common/TechUI';
@@ -30,6 +31,8 @@ const MODEL_LAYER = 1;
 const TARGET_SHIP_SIZE = 380;
 // 机库飞机模型目录（resources 下）
 const SHIP_DIR = 'Model/spaceship';
+// 机库深色背景色（相机清屏色，与旧全屏 Graphics 填充色一致）
+const BG_COLOR = new Color(10, 18, 32, 255);
 
 /**
  * 停机库（Hangar）：游戏入口流程的第二站（Intro 开场动画之后）。
@@ -38,7 +41,7 @@ const SHIP_DIR = 'Model/spaceship';
  */
 @ccclass('Hangar')
 export class Hangar extends Component {
-    /** 模型展示根节点（画面中央，位于 UI 平面之后避免深度冲突） */
+    /** 模型展示根节点（画面中央，DEFAULT 层，由 UI 相机一并渲染） */
     private modelRoot: Node | null = null;
     /** 当前展示的飞机 */
     private currentShip: Node | null = null;
@@ -51,6 +54,7 @@ export class Hangar extends Component {
 
     onLoad(): void {
         this.addLights();
+        this.setupCamera();
         this.buildBackground();
         this.buildUI();
         this.setupModelRoot();
@@ -63,15 +67,26 @@ export class Hangar extends Component {
         }
     }
 
-    /** 深色背景 + 中央展示台光环（机库风格） */
+    /**
+     * 将相机清屏色设为机库深色背景。
+     * 注意：不能用全屏 UI 节点（Graphics fillRect）做背景——引擎的 UI 阶段
+     * （ForwardStage 末尾的 UIPhase）在全部 3D 物体渲染完之后才绘制 2D UI，
+     * 且内置 UI 材质关闭了深度测试（builtin-graphics.effect: depthTest=false），
+     * 全屏不透明 UI 会把 3D 模型整个盖住（Debug 场景无全屏背景故模型可见）。
+     * 相机清屏发生在 3D 渲染之前，天然位于模型之后，不影响模型显示。
+     */
+    private setupCamera(): void {
+        const cam = this.node.scene?.getComponentInChildren(Camera);
+        if (cam) cam.clearColor = BG_COLOR;
+    }
+
+    /** 四角 HUD 装饰短线 + 中央展示台光环（深色背景由相机清屏色提供） */
     private buildBackground(): void {
+        // 四角装饰短线（HUD 风格）
         const bg = new Node('Background');
         bg.layer = this.node.layer;
         bg.addComponent(UITransform).setContentSize(1280, 720);
         const g = bg.addComponent(Graphics);
-        g.fillColor = new Color(10, 18, 32, 255);
-        g.fillRect(-640, -360, 1280, 720);
-        // 四角装饰短线（HUD 风格）
         g.strokeColor = new Color(0, 214, 255, 90);
         g.lineWidth = 2;
         const cx = 620;
@@ -135,7 +150,12 @@ export class Hangar extends Component {
         pressEffect(back);
     }
 
-    /** 模型展示根节点：画面中央，位于 UI 平面之后避免深度冲突 */
+    /**
+     * 模型展示根节点：画面中央。
+     * 模型在 DEFAULT 层（UI 相机 visibility 包含该层），z=-50 使其位于画布 UI 之前，
+     * 只要在相机 near/far（1~2000）内即可被渲染；UI 与模型的遮挡由绘制阶段决定
+     * （UI 阶段在 3D 之后，见 setupCamera 注释），不能靠调整 z 轴让 UI 退到模型之后。
+     */
     private setupModelRoot(): void {
         this.modelRoot = new Node('ModelRoot');
         this.modelRoot.layer = MODEL_LAYER;
