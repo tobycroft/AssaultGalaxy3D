@@ -49,10 +49,16 @@ const TARGET_MODEL_SIZE = 380;
 const LOADING_RING_R = 40;
 
 // ===== 解体特效参数 =====
-/** 解体模式：爆裂/碎裂/汽化/黑洞/旋风/切割/熔陷 */
-type FxMode = 'burst' | 'shatter' | 'vaporize' | 'blackhole' | 'whirlwind' | 'slice' | 'sink';
-/** 单次特效最多生成的碎片数（防模型面数过多时卡顿） */
+/** 解体模式：爆裂/碎裂(10/60/120 三档)/汽化/黑洞/旋风/切割/熔陷 */
+type FxMode = 'burst' | 'shatter10' | 'shatter60' | 'shatter120' | 'vaporize' | 'blackhole' | 'whirlwind' | 'slice' | 'sink';
+/** 非碎裂模式单次特效最多生成的碎片数（防模型面数过多时卡顿） */
 const FX_MAX_SHARDS = 120;
+/** 碎裂三档版本：目标碎片数（10 片 / 60 片 / 120 片） */
+const FX_SHATTER_CAPS: Record<string, number> = {
+    shatter10: 10,
+    shatter60: 60,
+    shatter120: 120,
+};
 /** 碎片重力加速度（世界单位/秒²） */
 const FX_GRAVITY = 420;
 /** 爆裂模式：碎片初速度上限、生命周期（秒） */
@@ -88,7 +94,9 @@ const FX_BTN_GAP = 10;
 /** 特效按钮定义（名称/文案/模式） */
 const FX_BUTTONS: { name: string; label: string; mode: FxMode }[] = [
     { name: 'BtnBurst', label: '爆裂', mode: 'burst' },
-    { name: 'BtnShatter', label: '碎裂', mode: 'shatter' },
+    { name: 'BtnShatter10', label: '碎裂×10', mode: 'shatter10' },
+    { name: 'BtnShatter60', label: '碎裂×60', mode: 'shatter60' },
+    { name: 'BtnShatter120', label: '碎裂×120', mode: 'shatter120' },
     { name: 'BtnVaporize', label: '汽化', mode: 'vaporize' },
     { name: 'BtnBlackhole', label: '黑洞', mode: 'blackhole' },
     { name: 'BtnWhirlwind', label: '旋风', mode: 'whirlwind' },
@@ -98,7 +106,9 @@ const FX_BUTTONS: { name: string; label: string; mode: FxMode }[] = [
 /** 各模式状态栏文案：名称 + 解体动作描述 */
 const FX_LABELS: Record<FxMode, string> = {
     burst: '爆裂',
-    shatter: '碎裂',
+    shatter10: '碎裂×10',
+    shatter60: '碎裂×60',
+    shatter120: '碎裂×120',
     vaporize: '汽化',
     blackhole: '黑洞',
     whirlwind: '旋风',
@@ -107,7 +117,9 @@ const FX_LABELS: Record<FxMode, string> = {
 };
 const FX_VERBS: Record<FxMode, string> = {
     burst: '飞溅而出',
-    shatter: '塌落解体',
+    shatter10: '塌落解体',
+    shatter60: '塌落解体',
+    shatter120: '塌落解体',
     vaporize: '蒸发消失',
     blackhole: '被吸入湮灭',
     whirlwind: '螺旋卷走',
@@ -741,11 +753,14 @@ export class Debug extends Component {
         this.modelRoot.addChild(shardRoot);
         this.shardRoot = shardRoot;
 
+        // 碎片总量上限：碎裂三档为 10/60/120，其余模式沿用默认上限
+        const cap = FX_SHATTER_CAPS[mode] ?? FX_MAX_SHARDS;
+
         // 遍历所有 MeshRenderer 提取碎片
         const renderers = model.getComponentsInChildren(MeshRenderer);
         let shardTotal = 0;
         for (const r of renderers) {
-            shardTotal += this.extractShards(r, mode, shardRoot, shardTotal);
+            shardTotal += this.extractShards(r, mode, shardRoot, shardTotal, cap);
         }
         if (this.shards.length === 0) {
             shardRoot.destroy();
@@ -1140,10 +1155,11 @@ export class Debug extends Component {
 
     /**
      * 从单个 MeshRenderer 提取三角形碎片：读取网格顶点/索引，按每组 2~3 个三角形
-     * （总量受 FX_MAX_SHARDS 限制）拆成多个小 Mesh，各自挂节点用渲染节点世界矩阵定位，
+     * （总量受 shardCap 限制）拆成多个小 Mesh，各自挂节点用渲染节点世界矩阵定位，
      * 并按模式赋予初速度与角速度。返回本次生成的碎片数。
+     * @param shardCap 本次特效的碎片总量上限（碎裂三档为 10/60/120，其余为 FX_MAX_SHARDS）
      */
-    private extractShards(renderer: MeshRenderer, mode: FxMode, shardRoot: Node, madeBefore: number): number {
+    private extractShards(renderer: MeshRenderer, mode: FxMode, shardRoot: Node, madeBefore: number, shardCap: number): number {
         const mesh = renderer.mesh;
         if (!mesh) return 0;
         const mat = renderer.getMaterialInstance(0) ?? renderer.material;
@@ -1161,8 +1177,8 @@ export class Debug extends Component {
             const triCount = Math.floor(indices.length / 3);
             if (triCount <= 0) continue;
 
-            // 分组大小：总量不超过 FX_MAX_SHARDS（含之前渲染器已生成的）
-            const remain = FX_MAX_SHARDS - (madeBefore + made);
+            // 分组大小：总量不超过 shardCap（含之前渲染器已生成的）
+            const remain = shardCap - (madeBefore + made);
             if (remain <= 0) break;
             const perGroup = Math.max(1, Math.ceil(triCount / remain));
 
@@ -1177,7 +1193,7 @@ export class Debug extends Component {
             }
 
             for (let start = 0; start < triCount; start += perGroup) {
-                if (madeBefore + made >= FX_MAX_SHARDS) break;
+                if (madeBefore + made >= shardCap) break;
                 const tris = order.slice(start, Math.min(start + perGroup, triCount));
                 if (tris.length === 0) continue;
 
@@ -1249,8 +1265,10 @@ export class Debug extends Component {
                             ang.set((Math.random() - 0.5) * 720, (Math.random() - 0.5) * 720, (Math.random() - 0.5) * 720);
                         }
                         break;
-                    case 'shatter':
-                        // 碎裂：低速塌落 + 打滚
+                    case 'shatter10':
+                    case 'shatter60':
+                    case 'shatter120':
+                        // 碎裂（10/60/120 三档）：低速塌落 + 打滚，运动参数一致，仅碎片数不同
                         maxLife = FX_SHATTER_LIFE;
                         {
                             const speed = FX_SHATTER_SPEED * (0.4 + Math.random() * 0.8);
@@ -1357,7 +1375,9 @@ export class Debug extends Component {
             const e = sh.node.eulerAngles;
             switch (this.fxMode) {
                 case 'burst':
-                case 'shatter':
+                case 'shatter10':
+                case 'shatter60':
+                case 'shatter120':
                 case 'slice':
                     // 重力抛物线 + 位移（shardRoot 无附加变换，本地速度即世界速度）
                     sh.vel.y -= FX_GRAVITY * dt;
