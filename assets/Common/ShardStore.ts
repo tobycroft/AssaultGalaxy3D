@@ -33,6 +33,20 @@ const HEADER_SIZE = 12;
 /** 几何指纹浮点数个数：渲染器数 + AABB 六分量 */
 const FP_SIZE = 7;
 
+/** 非碎裂模式单次特效最多生成的碎片数（防模型面数过多时卡顿） */
+export const FX_MAX_SHARDS = 120;
+/** 碎裂三档版本：目标碎片数（10 片 / 60 片 / 120 片） */
+export const FX_SHATTER_CAPS: Record<string, number> = {
+    shatter10: 10,
+    shatter60: 60,
+    shatter120: 120,
+};
+/** 全部预缓存档位（去重）：碎裂三档 + 非碎裂模式档位（FX_MAX_SHARDS 与 shatter120 同档） */
+export function allShardCaps(): number[] {
+    return [FX_SHATTER_CAPS.shatter10, FX_SHATTER_CAPS.shatter60, FX_SHATTER_CAPS.shatter120, FX_MAX_SHARDS]
+        .filter((c, i, arr) => arr.indexOf(c) === i);
+}
+
 /** 单个碎片的原始网格数据（可序列化，落盘与重建的基本单元） */
 export interface ShardBlob {
     /** 来源渲染节点在模型内的路径（模型根节点为 ''，'/' 分隔） */

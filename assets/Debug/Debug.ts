@@ -36,7 +36,8 @@ import {
 } from 'cc';
 import { fadeIn, fadeOutThen } from '../Common/UIAnim';
 import { paintTechButton, TechButtonKind, techTextColor, TechText } from '../Common/TechUI';
-import { ShardBlob, ShardEntry, ShardStore } from '../Common/ShardStore';
+import { allShardCaps, FX_MAX_SHARDS, FX_SHATTER_CAPS, ShardBlob, ShardEntry, ShardStore } from '../Common/ShardStore';
+import { extractShards, modelFingerprint, readSubMeshes, resolveNodePath, SrcSubMesh } from '../Common/ShardCutter';
 
 const { ccclass } = _decorator;
 
@@ -56,16 +57,9 @@ const LOADING_SPIN_R = 52;
 // ===== 解体特效参数 =====
 /** 解体模式：爆裂/碎裂(10/60/120 三档)/汽化/黑洞/旋风/切割/熔陷 */
 type FxMode = 'burst' | 'shatter10' | 'shatter60' | 'shatter120' | 'vaporize' | 'blackhole' | 'whirlwind' | 'slice' | 'sink';
-/** 非碎裂模式单次特效最多生成的碎片数（防模型面数过多时卡顿） */
-const FX_MAX_SHARDS = 120;
-/** 碎裂三档版本：目标碎片数（10 片 / 60 片 / 120 片） */
-const FX_SHATTER_CAPS: Record<string, number> = {
-    shatter10: 10,
-    shatter60: 60,
-    shatter120: 120,
-};
-/** 单碎片三角形数上限：3×21845 = 65535，恰为 utils.createMesh（R16UI 索引）的顶点数上限 */
-const FX_MAX_TRIS_PER_SHARD = 21845;
+// 碎片档位常量（FX_SHATTER_CAPS / FX_MAX_SHARDS / allShardCaps）与切割算法
+// （extractShards / readSubMeshes / modelFingerprint / resolveNodePath）已移至
+// Common/ShardStore 与 Common/ShardCutter，供 Debug 与 Intro 开机预热共用
 /**
  * 碎片模板（播放期形态）：碎片网格 + 来源渲染节点 + 材质。
  * 由 ShardStore 缓存条目（ShardEntry）按当前模型实例绑定生成：网格顶点在渲染节点
@@ -78,43 +72,6 @@ interface ShardTemplate {
     srcNode: Node;
 }
 
-/**
- * 单个渲染器子网格的原始属性数据：读条期预缓存时对每个渲染器只读一次，
- * 供全部档位（10/60/120）复用，避免原实现每档重复 readAttribute 全量拷贝。
- */
-interface SrcSubMesh {
-    positions: Float32Array;
-    normals: Float32Array | null;
-    uvs: Float32Array | null;
-    /** readIndices 视索引宽度可能返回 8/16/32 位 */
-    indices: Uint8Array | Uint16Array | Uint32Array;
-}
-
-/**
- * 计算节点在模型根内的路径（'/' 分隔；模型根本身为 ''）。
- * 碎片模板跨场景复用时只存路径不存节点引用——模型每次进入都是新实例。
- */
-function nodePathWithin(node: Node, root: Node): string {
-    const names: string[] = [];
-    let cur: Node | null = node;
-    while (cur && cur !== root) {
-        names.unshift(cur.name);
-        cur = cur.parent;
-    }
-    return names.join('/');
-}
-
-/** 按模型内路径逐段精确查找节点（不用 getChildByPath：依赖字符串切分，异常名称易歧义） */
-function resolveNodePath(root: Node, path: string): Node | null {
-    if (!path) return root;
-    let cur: Node | null = root;
-    for (const name of path.split('/')) {
-        if (!name) return null;
-        cur = cur.getChildByName(name);
-        if (!cur) return null;
-    }
-    return cur;
-}
 /** 碎片重力加速度（世界单位/秒²） */
 const FX_GRAVITY = 420;
 /** 爆裂模式：碎片初速度上限、生命周期（秒） */
@@ -880,8 +837,7 @@ export class Debug extends Component {
      */
     private precacheShardTemplates(prefabUuid: string, model: Node, onDone: () => void): void {
         // 全部档位去重：碎裂三档 + 非碎裂模式档位（FX_MAX_SHARDS 与 shatter120 同档）
-        const caps = [FX_SHATTER_CAPS.shatter10, FX_SHATTER_CAPS.shatter60, FX_SHATTER_CAPS.shatter120, FX_MAX_SHARDS]
-            .filter((c, i, arr) => arr.indexOf(c) === i);
+        const caps = allShardCaps();
         this.updateLoadingFx(0, caps.length);
         // 注册任务，首帧先画出 0%，下一帧 update 开始处理第一档
         this.precacheJob = {
@@ -889,7 +845,7 @@ export class Debug extends Component {
             model,
             caps,
             total: caps.length,
-            fingerprint: this.modelFingerprint(model),
+            fingerprint: modelFingerprint(model),
             subs: null,
             onDone,
         };
@@ -919,11 +875,11 @@ export class Debug extends Component {
                     job.subs = new Map();
                     // getComponentsInChildren 会一并遍历非激活节点，隐藏状态不影响提取
                     for (const r of job.model.getComponentsInChildren(MeshRenderer)) {
-                        job.subs.set(r, this.readSubMeshes(r));
+                        job.subs.set(r, readSubMeshes(r));
                     }
                 }
                 const blobs: ShardBlob[] = [];
-                for (const [r, subs] of job.subs) this.extractShards(r, job.model, blobs, cap, subs);
+                for (const [r, subs] of job.subs) extractShards(r, job.model, blobs, cap, subs);
                 if (blobs.length > 0) {
                     ShardStore.set(job.prefabUuid, cap, ShardStore.buildEntries(blobs));
                     // native 上异步落盘，下次启动读文件重建；浏览器预览内部自动跳过
@@ -933,59 +889,6 @@ export class Debug extends Component {
         }
         if (job.caps.length === 0) job.subs = null; // 三档处理完释放属性缓存
         this.updateLoadingFx(job.total - job.caps.length, job.total);
-    }
-
-    /** 读取单个渲染器全部子网格的原始属性（readAttribute 是全量 CPU 拷贝，每个渲染器只做一次） */
-    private readSubMeshes(renderer: MeshRenderer): (SrcSubMesh | null)[] {
-        const mesh = renderer.mesh;
-        const out: (SrcSubMesh | null)[] = [];
-        if (!mesh) return out;
-        for (let s = 0; s < mesh.renderingSubMeshes.length; s++) {
-            // 顶点属性名（gfx.AttributeName 不在 cc 顶层导出，直接用其字符串值）
-            const positions = mesh.readAttribute(s, 'a_position') as Float32Array | null;
-            const indices = mesh.readIndices(s);
-            if (!positions || !indices) {
-                out.push(null);
-                continue;
-            }
-            out.push({
-                positions,
-                normals: mesh.readAttribute(s, 'a_normal') as Float32Array | null,
-                uvs: mesh.readAttribute(s, 'a_texCoord') as Float32Array | null,
-                indices,
-            });
-        }
-        return out;
-    }
-
-    /**
-     * 轻量几何指纹：渲染器数量 + 全部网格包围盒（minPosition/maxPosition 取 struct
-     * 缓存值，无数据拷贝）。用于磁盘缓存失效校验——模型重新导入后 prefab uuid 不变
-     * 但几何可能已变，指纹不一致即丢弃磁盘缓存重新切，防止播放陈旧碎片。
-     */
-    private modelFingerprint(model: Node): number[] {
-        const renderers = model.getComponentsInChildren(MeshRenderer);
-        let minX = Infinity;
-        let minY = Infinity;
-        let minZ = Infinity;
-        let maxX = -Infinity;
-        let maxY = -Infinity;
-        let maxZ = -Infinity;
-        for (const r of renderers) {
-            const lo = r.mesh?.minPosition;
-            const hi = r.mesh?.maxPosition;
-            if (!lo || !hi) continue;
-            minX = Math.min(minX, lo.x);
-            minY = Math.min(minY, lo.y);
-            minZ = Math.min(minZ, lo.z);
-            maxX = Math.max(maxX, hi.x);
-            maxY = Math.max(maxY, hi.y);
-            maxZ = Math.max(maxZ, hi.z);
-        }
-        if (!isFinite(minX)) {
-            minX = minY = minZ = maxX = maxY = maxZ = 0;
-        }
-        return [renderers.length, minX, minY, minZ, maxX, maxY, maxZ];
     }
 
     /**
@@ -1097,7 +1000,7 @@ export class Debug extends Component {
             // 遍历所有 MeshRenderer 提取碎片（切网格与模式无关，运动参数在生成节点时按模式赋予）
             const renderers = model.getComponentsInChildren(MeshRenderer);
             for (const r of renderers) {
-                this.extractShards(r, model, blobs, cap);
+                extractShards(r, model, blobs, cap);
             }
             if (blobs.length === 0) {
                 shardRoot.destroy();
@@ -1107,7 +1010,7 @@ export class Debug extends Component {
             }
             const built = ShardStore.buildEntries(blobs);
             ShardStore.set(prefabUuid, cap, built);
-            ShardStore.saveDiskAsync(prefabUuid, cap, blobs, this.modelFingerprint(model));
+            ShardStore.saveDiskAsync(prefabUuid, cap, blobs, modelFingerprint(model));
             templates = this.bindEntries(model, built);
             if (!templates) {
                 // 理论兜底：刚切的模板必定能绑定到当前实例；真失败按无数据对待
@@ -1503,123 +1406,6 @@ export class Debug extends Component {
             this.shakeCamera = null;
             this.shakeOrigin = null;
         }
-    }
-
-    /**
-     * 从单个 MeshRenderer 提取三角形碎片：按每组 2~3 个三角形左右（总量受 shardCap
-     * 限制）拆成多个小网格的原始数据，以 ShardBlob 形式写入 out（数据 + 来源节点路径）。
-     * 切网格与解体模式无关（运动参数在 spawnShards 按模式赋予），故结果可按档位缓存复用。
-     * 大模型性能/正确性要点：
-     *  - 全程复用 TypedArray 缓冲区 + 整表索引去重，不用 Map 与 JS 数组（海量小分配是卡顿主因）；
-     *  - 属性读取支持外部预读（preloaded）：读条期预缓存读一次、全部档位复用，避免每档
-     *    重复 readAttribute 全量拷贝；
-     *  - 组内按 FX_MAX_TRIS_PER_SHARD 切块规避 16 位索引上限（见常量注释）；
-     *  - 档位已满时每个子网格仍至少保留 1 组，保证全覆盖、不漏画。
-     * @param root 模型根节点：来源节点以「模型内路径」记录（模型每次进入都是新实例，不能存引用）
-     * @param shardCap 本次特效的碎片总量上限（碎裂三档为 10/60/120，其余为 FX_MAX_SHARDS）
-     * @param preloaded 外部预读的子网格属性（见 readSubMeshes），缺省则现场读取
-     * @return 本次生成的碎片数
-     */
-    private extractShards(
-        renderer: MeshRenderer,
-        root: Node,
-        out: ShardBlob[],
-        shardCap: number,
-        preloaded?: (SrcSubMesh | null)[],
-    ): number {
-        const mesh = renderer.mesh;
-        if (!mesh) return 0;
-        // 属性读取：优先用调用方预读的缓存（读一次切全部档位），否则现场读
-        const subs = preloaded ?? this.readSubMeshes(renderer);
-        const nodePath = nodePathWithin(renderer.node, root);
-        let made = 0;
-
-        for (let s = 0; s < subs.length; s++) {
-            const sub = subs[s];
-            if (!sub) continue;
-            const { positions, normals, uvs, indices } = sub;
-
-            const triCount = Math.floor(indices.length / 3);
-            if (triCount <= 0) continue;
-
-            // 分组大小：目标不超过 shardCap（含之前渲染器已生成的）；
-            // 档位已满时也保证每个子网格至少 1 组，避免超出上限后整个子网格被漏画
-            const remain = Math.max(1, shardCap - out.length);
-            const perGroup = Math.max(1, Math.ceil(triCount / remain));
-
-            // 三角形顺序确定性打乱，让相邻面随机落入不同碎片
-            const order = new Int32Array(triCount);
-            for (let t = 0; t < triCount; t++) order[t] = t;
-            for (let t = triCount - 1; t > 0; t--) {
-                const j = (t * 7919 + s * 104729 + made * 31) % (t + 1);
-                const tmp = order[t];
-                order[t] = order[j];
-                order[j] = tmp;
-            }
-
-            // 顶点去重scratch：源顶点索引 → 新索引，-1 为未使用（比 Map 快一个量级）
-            const vCount = positions.length / 3;
-            const vMap = new Int32Array(vCount).fill(-1);
-            // 组内还要按 16 位索引上限切块，缓冲区按块上限预分配一次，块间复用（避免每碎片重复分配）
-            const chunkTris = Math.min(perGroup, FX_MAX_TRIS_PER_SHARD);
-            const maxVerts = Math.min(vCount, chunkTris * 3);
-            const bufPos = new Float32Array(maxVerts * 3);
-            const bufNor = normals ? new Float32Array(maxVerts * 3) : null;
-            const bufUv = uvs ? new Float32Array(maxVerts * 2) : null;
-            const bufIdx = new Uint16Array(chunkTris * 3);
-            // 新索引 → 源顶点索引，用于块末归还去重槽位
-            const bufSrc = new Int32Array(maxVerts);
-
-            for (let start = 0; start < triCount; start += perGroup) {
-                const end = Math.min(start + perGroup, triCount);
-                // 组内按 16 位索引顶点上限再切块：超大模型 + 小档位时单组顶点会超 65535，
-                // utils.createMesh 仅支持 R16UI 索引，不切块会静默回绕错画（原实现的隐患）
-                for (let cs = start; cs < end; cs += FX_MAX_TRIS_PER_SHARD) {
-                    const ce = Math.min(cs + FX_MAX_TRIS_PER_SHARD, end);
-                    let nv = 0;
-                    let ni = 0;
-                    for (let t = cs; t < ce; t++) {
-                        const tri = order[t] * 3;
-                        for (let k = 0; k < 3; k++) {
-                            const src = indices[tri + k];
-                            let dst = vMap[src];
-                            if (dst === undefined || dst < 0) {
-                                dst = nv++;
-                                vMap[src] = dst;
-                                bufSrc[dst] = src;
-                                const p3 = src * 3;
-                                bufPos[dst * 3] = positions[p3];
-                                bufPos[dst * 3 + 1] = positions[p3 + 1];
-                                bufPos[dst * 3 + 2] = positions[p3 + 2];
-                                if (bufNor && normals) {
-                                    bufNor[dst * 3] = normals[p3];
-                                    bufNor[dst * 3 + 1] = normals[p3 + 1];
-                                    bufNor[dst * 3 + 2] = normals[p3 + 2];
-                                }
-                                if (bufUv && uvs) {
-                                    const t2 = src * 2;
-                                    bufUv[dst * 2] = uvs[t2];
-                                    bufUv[dst * 2 + 1] = uvs[t2 + 1];
-                                }
-                            }
-                            bufIdx[ni++] = dst;
-                        }
-                    }
-                    // 归还去重槽位（仅重置本块用到的，O(nv)）
-                    for (let d = 0; d < nv; d++) vMap[bufSrc[d]] = -1;
-
-                    out.push({
-                        nodePath,
-                        positions: bufPos.slice(0, nv * 3),
-                        normals: bufNor ? bufNor.slice(0, nv * 3) : null,
-                        uvs: bufUv ? bufUv.slice(0, nv * 2) : null,
-                        indices: bufIdx.slice(0, ni),
-                    });
-                    made++;
-                }
-            }
-        }
-        return made;
     }
 
     /**
