@@ -36,6 +36,7 @@ import {
 } from 'cc';
 import { fadeIn, fadeOutThen } from '../Common/UIAnim';
 import { paintTechButton, TechButtonKind, techTextColor, TechText } from '../Common/TechUI';
+import { ShardBlob, ShardEntry, ShardStore } from '../Common/ShardStore';
 
 const { ccclass } = _decorator;
 
@@ -66,14 +67,53 @@ const FX_SHATTER_CAPS: Record<string, number> = {
 /** 单碎片三角形数上限：3×21845 = 65535，恰为 utils.createMesh（R16UI 索引）的顶点数上限 */
 const FX_MAX_TRIS_PER_SHARD = 21845;
 /**
- * 碎片模板：预提取的碎片网格 + 来源渲染节点 + 材质（按 模型+档位 缓存）。
- * 网格顶点在渲染节点局部空间，播放时按来源节点当前世界矩阵实时换算放置
- * （模型会自旋，矩阵不能缓存），从而同一模型重复播放不再重新切网格与上传显存。
+ * 碎片模板（播放期形态）：碎片网格 + 来源渲染节点 + 材质。
+ * 由 ShardStore 缓存条目（ShardEntry）按当前模型实例绑定生成：网格顶点在渲染节点
+ * 局部空间，播放时按来源节点当前世界矩阵实时换算放置（模型会自旋，矩阵不能缓存），
+ * 从而同一模型重复播放（含重进场景）不再重新切网格与上传显存。
  */
 interface ShardTemplate {
     mesh: Mesh;
     material: Material | null;
     srcNode: Node;
+}
+
+/**
+ * 单个渲染器子网格的原始属性数据：读条期预缓存时对每个渲染器只读一次，
+ * 供全部档位（10/60/120）复用，避免原实现每档重复 readAttribute 全量拷贝。
+ */
+interface SrcSubMesh {
+    positions: Float32Array;
+    normals: Float32Array | null;
+    uvs: Float32Array | null;
+    /** readIndices 视索引宽度可能返回 8/16/32 位 */
+    indices: Uint8Array | Uint16Array | Uint32Array;
+}
+
+/**
+ * 计算节点在模型根内的路径（'/' 分隔；模型根本身为 ''）。
+ * 碎片模板跨场景复用时只存路径不存节点引用——模型每次进入都是新实例。
+ */
+function nodePathWithin(node: Node, root: Node): string {
+    const names: string[] = [];
+    let cur: Node | null = node;
+    while (cur && cur !== root) {
+        names.unshift(cur.name);
+        cur = cur.parent;
+    }
+    return names.join('/');
+}
+
+/** 按模型内路径逐段精确查找节点（不用 getChildByPath：依赖字符串切分，异常名称易歧义） */
+function resolveNodePath(root: Node, path: string): Node | null {
+    if (!path) return root;
+    let cur: Node | null = root;
+    for (const name of path.split('/')) {
+        if (!name) return null;
+        cur = cur.getChildByName(name);
+        if (!cur) return null;
+    }
+    return cur;
 }
 /** 碎片重力加速度（世界单位/秒²） */
 const FX_GRAVITY = 420;
@@ -204,7 +244,8 @@ const CATEGORY_NAMES: Record<string, string> = {
  * 进入流程：双进度条读条（模型加载 / 效果预缓存）→ 默认加载第一个模型并
  * 预缓存其全部档位的碎片模板 → 用户点击左侧按钮切换模型、点击底部按钮播放特效。
  * 解体特效把模型网格按三角形分组切成独立碎片运动（详见 extractShards / spawnShards），
- * 碎片模板按 模型+档位 缓存，首次播放零卡顿。
+ * 碎片模板按 prefab uuid+档位 缓存于 ShardStore（模块级单例）：同一会话内重进场景
+ * 直接用内存缓存，native 上重启后读磁盘缓存重建，首次播放零卡顿。
  */
 @ccclass('Debug')
 export class Debug extends Component {
@@ -229,8 +270,20 @@ export class Debug extends Component {
      * 读条期预缓存任务：待缓存档位队列，由 update 每帧处理一档（precacheTick）。
      * 不用 scheduleOnce 让回调自调度：同一回调重复调度时引擎只告警、不新建定时器
      * （scheduler.ts logID 1507），且一次性定时器在回调执行后即自取消，链会断。
+     * subs：全部渲染器的子网格属性缓存，首次切割时读一次、后续档位复用（读一次切三档），
+     * 三档处理完置 null 释放（大模型的属性全量拷贝占用可观）。
      */
-    private precacheJob: { model: Node; caps: number[]; total: number; onDone: () => void } | null = null;
+    private precacheJob: {
+        prefabUuid: string;
+        model: Node;
+        caps: number[];
+        total: number;
+        /** 当前模型的几何指纹：磁盘缓存失效校验用（模型重新导入后 uuid 不变但几何可能已变） */
+        fingerprint: number[];
+        /** 渲染器 → 子网格属性缓存；null 表示尚未读取 */
+        subs: Map<MeshRenderer, (SrcSubMesh | null)[]> | null;
+        onDone: () => void;
+    } | null = null;
     /** 加载界面外圈旋转装饰节点（隐藏后置空，update 据此停止旋转） */
     private spinNode: Node | null = null;
     /** 装饰弧当前旋转角（度），由 update 逐帧累加 */
@@ -241,8 +294,12 @@ export class Debug extends Component {
     private shardRoot: Node | null = null;
     /** 活动碎片列表（位置/速度由 update 驱动） */
     private shards: { node: Node; vel: Vec3; ang: Vec3; life: number; maxLife: number; baseScale: Vec3 }[] = [];
-    /** 碎片模板缓存：key = 模型节点 uuid|碎片档位，避免同一模型重复播放时重新切网格导致卡顿 */
-    private shardCache = new Map<string, ShardTemplate[]>();
+    /**
+     * 当前模型的 prefab 资源 uuid：碎片缓存 key 用它而非实例 node.uuid——
+     * 模型每次进场景都是 instantiate 出来的新实例，实例 uuid 每次都变、跨场景必 miss。
+     * 碎片模板本体在 ShardStore（模块级单例，跨场景存活），此处只记录当前模型的 key 前缀。
+     */
+    private currentPrefabUuid = '';
     /** 爆裂/切割中央闪光（圆环，由 update 驱动放大淡出） */
     private fxFlash: { node: Node; life: number; maxLife: number } | null = null;
     /** 特效是否播放中（播放中禁止再次触发/切换） */
@@ -637,15 +694,16 @@ export class Debug extends Component {
                 const first = [...loaded].sort((a, b) => a.path.localeCompare(b.path))[0];
                 const model = instantiate(first.prefab);
                 this.resetFx();
-                this.shardCache.clear();
                 this.clearModel();
                 this.modelRoot.addChild(model);
                 this.currentModel = model;
-                // 预缓存期间保持隐藏：碎片模板只记录来源节点，矩阵在播放时按当前朝向实时换算
+                // 缓存 key 用 prefab 资源 uuid：重进场景时新实例也能命中 ShardStore
+                this.currentPrefabUuid = first.prefab.uuid;
+                // 预缓存期间保持隐藏：碎片模板只记录来源节点路径，矩阵在播放时按当前朝向实时换算
                 model.active = false;
                 this.spin = false;
                 this.refreshFxButtons();
-                this.precacheShardTemplates(model, () => {
+                this.precacheShardTemplates(first.prefab.uuid, model, () => {
                     if (!this.isValid) return;
                     // 收起加载界面后亮出模型，再展示模型列表
                     this.hideLoading(() => {
@@ -786,12 +844,13 @@ export class Debug extends Component {
     private displayModel(prefab: Prefab): void {
         // 切换模型前先复位特效（清理碎片/闪光，恢复模型可见性）
         this.resetFx();
-        // 旧模型即将销毁，其碎片模板（含 GPU 网格显存）一并释放，避免缓存悬挂与显存泄漏
-        this.shardCache.clear();
+        // 不再清碎片缓存：ShardStore 按 prefab uuid 隔离各模型（上限 4 个），切走的模型
+        // 缓存仍在、切回即命中；旧模型节点销毁不影响缓存（缓存只存 Mesh + 节点路径）
         this.clearModel();
         const model = instantiate(prefab);
         this.modelRoot!.addChild(model);
         this.currentModel = model;
+        this.currentPrefabUuid = prefab.uuid;
         this.spin = false;
         this.revealModel(model);
         this.setStatus('已加载模型: ' + (prefab.name || 'unknown'));
@@ -811,21 +870,32 @@ export class Debug extends Component {
 
     /**
      * 启动读条期碎片模板预缓存：对指定模型按全部档位（碎裂 10/60/120，非碎裂模式共用
-     * FX_MAX_SHARDS=120）预先切好网格并写入 shardCache。切网格与解体模式无关，
+     * FX_MAX_SHARDS=120）预先切好网格并写入 ShardStore。切网格与解体模式无关，
      * 全部档位缓存后，首次播放任意解体特效都直接命中缓存，消除首次卡顿。
-     * 由 update 每帧处理一档（见 precacheTick），切期间进度条可实时重绘；
-     * 模型保持隐藏（模板只记录来源节点，矩阵在播放时按当前世界矩阵实时换算）。
+     * 每档命中顺序：内存 store → native 磁盘缓存（读文件重建 Mesh，仅剩 GPU 上传）
+     * → 现场切割（切完异步入盘）。由 update 每帧处理一档（见 precacheTick），
+     * 切期间进度条可实时重绘；模型保持隐藏（模板只记录来源节点路径，矩阵在播放时
+     * 按当前世界矩阵实时换算）。
+     * @param prefabUuid 模型的 prefab 资源 uuid（缓存 key，跨场景稳定）
      */
-    private precacheShardTemplates(model: Node, onDone: () => void): void {
+    private precacheShardTemplates(prefabUuid: string, model: Node, onDone: () => void): void {
         // 全部档位去重：碎裂三档 + 非碎裂模式档位（FX_MAX_SHARDS 与 shatter120 同档）
         const caps = [FX_SHATTER_CAPS.shatter10, FX_SHATTER_CAPS.shatter60, FX_SHATTER_CAPS.shatter120, FX_MAX_SHARDS]
             .filter((c, i, arr) => arr.indexOf(c) === i);
         this.updateLoadingFx(0, caps.length);
-        // 注册任务，首帧先画出 0%，下一帧 update 开始切第一档
-        this.precacheJob = { model, caps, total: caps.length, onDone };
+        // 注册任务，首帧先画出 0%，下一帧 update 开始处理第一档
+        this.precacheJob = {
+            prefabUuid,
+            model,
+            caps,
+            total: caps.length,
+            fingerprint: this.modelFingerprint(model),
+            subs: null,
+            onDone,
+        };
     }
 
-    /** 预缓存推进一档：切当前档位的碎片模板并更新进度条，队列空了执行完成回调 */
+    /** 预缓存推进一档：查缓存/切当前档位碎片模板并更新进度条，队列空了执行完成回调 */
     private precacheTick(): void {
         const job = this.precacheJob;
         if (!job) return;
@@ -836,15 +906,103 @@ export class Debug extends Component {
             job.onDone();
             return;
         }
-        const key = `${job.model.uuid}|${cap}`;
-        if (!this.shardCache.has(key)) {
-            const templates: ShardTemplate[] = [];
-            // getComponentsInChildren 会一并遍历非激活节点，隐藏状态不影响提取
-            const renderers = job.model.getComponentsInChildren(MeshRenderer);
-            for (const r of renderers) this.extractShards(r, templates, cap);
-            if (templates.length > 0) this.shardCache.set(key, templates);
+        if (!ShardStore.has(job.prefabUuid, cap)) {
+            // 先查 native 磁盘缓存：命中则重建 Mesh 跳过切割（仅剩 GPU 上传）；
+            // 浏览器预览无文件系统，loadDisk 直接返回 null 走现场切割
+            const diskBlobs = ShardStore.loadDisk(job.prefabUuid, cap, job.fingerprint);
+            if (diskBlobs && diskBlobs.length > 0) {
+                ShardStore.set(job.prefabUuid, cap, ShardStore.buildEntries(diskBlobs));
+            } else {
+                // 未命中：现场切割。首次切割读取全部子网格属性并缓存到 job.subs，
+                // 后续档位直接复用——原实现每档都 readAttribute 全量拷贝一遍（×3 档）
+                if (!job.subs) {
+                    job.subs = new Map();
+                    // getComponentsInChildren 会一并遍历非激活节点，隐藏状态不影响提取
+                    for (const r of job.model.getComponentsInChildren(MeshRenderer)) {
+                        job.subs.set(r, this.readSubMeshes(r));
+                    }
+                }
+                const blobs: ShardBlob[] = [];
+                for (const [r, subs] of job.subs) this.extractShards(r, job.model, blobs, cap, subs);
+                if (blobs.length > 0) {
+                    ShardStore.set(job.prefabUuid, cap, ShardStore.buildEntries(blobs));
+                    // native 上异步落盘，下次启动读文件重建；浏览器预览内部自动跳过
+                    ShardStore.saveDiskAsync(job.prefabUuid, cap, blobs, job.fingerprint);
+                }
+            }
         }
+        if (job.caps.length === 0) job.subs = null; // 三档处理完释放属性缓存
         this.updateLoadingFx(job.total - job.caps.length, job.total);
+    }
+
+    /** 读取单个渲染器全部子网格的原始属性（readAttribute 是全量 CPU 拷贝，每个渲染器只做一次） */
+    private readSubMeshes(renderer: MeshRenderer): (SrcSubMesh | null)[] {
+        const mesh = renderer.mesh;
+        const out: (SrcSubMesh | null)[] = [];
+        if (!mesh) return out;
+        for (let s = 0; s < mesh.renderingSubMeshes.length; s++) {
+            // 顶点属性名（gfx.AttributeName 不在 cc 顶层导出，直接用其字符串值）
+            const positions = mesh.readAttribute(s, 'a_position') as Float32Array | null;
+            const indices = mesh.readIndices(s);
+            if (!positions || !indices) {
+                out.push(null);
+                continue;
+            }
+            out.push({
+                positions,
+                normals: mesh.readAttribute(s, 'a_normal') as Float32Array | null,
+                uvs: mesh.readAttribute(s, 'a_texCoord') as Float32Array | null,
+                indices,
+            });
+        }
+        return out;
+    }
+
+    /**
+     * 轻量几何指纹：渲染器数量 + 全部网格包围盒（minPosition/maxPosition 取 struct
+     * 缓存值，无数据拷贝）。用于磁盘缓存失效校验——模型重新导入后 prefab uuid 不变
+     * 但几何可能已变，指纹不一致即丢弃磁盘缓存重新切，防止播放陈旧碎片。
+     */
+    private modelFingerprint(model: Node): number[] {
+        const renderers = model.getComponentsInChildren(MeshRenderer);
+        let minX = Infinity;
+        let minY = Infinity;
+        let minZ = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        let maxZ = -Infinity;
+        for (const r of renderers) {
+            const lo = r.mesh?.minPosition;
+            const hi = r.mesh?.maxPosition;
+            if (!lo || !hi) continue;
+            minX = Math.min(minX, lo.x);
+            minY = Math.min(minY, lo.y);
+            minZ = Math.min(minZ, lo.z);
+            maxX = Math.max(maxX, hi.x);
+            maxY = Math.max(maxY, hi.y);
+            maxZ = Math.max(maxZ, hi.z);
+        }
+        if (!isFinite(minX)) {
+            minX = minY = minZ = maxX = maxY = maxZ = 0;
+        }
+        return [renderers.length, minX, minY, minZ, maxX, maxY, maxZ];
+    }
+
+    /**
+     * 把 ShardStore 缓存条目绑定到当前模型实例：按节点路径重新解析来源渲染节点，
+     * 材质从当前实例的渲染器取（旧实例已销毁，节点引用与材质实例都不能跨场景复用）。
+     * 任一路径解析失败返回 null（调用方回退重新切割）。
+     */
+    private bindEntries(model: Node, entries: ShardEntry[]): ShardTemplate[] | null {
+        const out: ShardTemplate[] = [];
+        for (const e of entries) {
+            const srcNode = resolveNodePath(model, e.nodePath);
+            if (!srcNode) return null;
+            const mr = srcNode.getComponent(MeshRenderer);
+            const material = mr ? (mr.getMaterialInstance(0) ?? mr.material) : null;
+            out.push({ mesh: e.mesh, material, srcNode });
+        }
+        return out;
     }
 
     private clearModel(): void {
@@ -927,24 +1085,37 @@ export class Debug extends Component {
         // 碎片总量上限：碎裂三档为 10/60/120，其余模式沿用默认上限
         const cap = FX_SHATTER_CAPS[mode] ?? FX_MAX_SHARDS;
 
-        // 碎片模板按 模型+档位 缓存：分组只取决于档位、与解体模式无关，
+        // 碎片模板按 prefab uuid+档位 缓存（ShardStore，跨场景复用的静态缓存）：
         // 同一模型重复播放（或同档位切换模式）直接复用，不再重新切网格与上传显存
-        const key = `${model.uuid}|${cap}`;
-        let templates = this.shardCache.get(key);
+        const prefabUuid = this.currentPrefabUuid || model.uuid;
+        let templates: ShardTemplate[] | null = null;
+        const entries = ShardStore.get(prefabUuid, cap);
+        if (entries) templates = this.bindEntries(model, entries);
         if (!templates) {
-            templates = [];
+            // 未命中（首次播放/切过模型/浏览器刷新后）：现场切网格并写缓存
+            const blobs: ShardBlob[] = [];
             // 遍历所有 MeshRenderer 提取碎片（切网格与模式无关，运动参数在生成节点时按模式赋予）
             const renderers = model.getComponentsInChildren(MeshRenderer);
             for (const r of renderers) {
-                this.extractShards(r, templates, cap);
+                this.extractShards(r, model, blobs, cap);
             }
-            if (templates.length === 0) {
+            if (blobs.length === 0) {
                 shardRoot.destroy();
                 this.shardRoot = null;
                 this.setStatus('当前模型没有可碎裂的网格数据');
                 return;
             }
-            this.shardCache.set(key, templates);
+            const built = ShardStore.buildEntries(blobs);
+            ShardStore.set(prefabUuid, cap, built);
+            ShardStore.saveDiskAsync(prefabUuid, cap, blobs, this.modelFingerprint(model));
+            templates = this.bindEntries(model, built);
+            if (!templates) {
+                // 理论兜底：刚切的模板必定能绑定到当前实例；真失败按无数据对待
+                shardRoot.destroy();
+                this.shardRoot = null;
+                this.setStatus('碎片模板绑定失败，无法播放特效');
+                return;
+            }
         }
 
         // 由模板生成碎片节点并赋予运动参数
@@ -1335,32 +1506,38 @@ export class Debug extends Component {
     }
 
     /**
-     * 从单个 MeshRenderer 提取三角形碎片：读取网格顶点/索引，按每组 2~3 个三角形左右
-     * （总量受 shardCap 限制）拆成多个小 Mesh，以模板形式写入 out（网格 + 材质 + 来源节点）。
+     * 从单个 MeshRenderer 提取三角形碎片：按每组 2~3 个三角形左右（总量受 shardCap
+     * 限制）拆成多个小网格的原始数据，以 ShardBlob 形式写入 out（数据 + 来源节点路径）。
      * 切网格与解体模式无关（运动参数在 spawnShards 按模式赋予），故结果可按档位缓存复用。
      * 大模型性能/正确性要点：
      *  - 全程复用 TypedArray 缓冲区 + 整表索引去重，不用 Map 与 JS 数组（海量小分配是卡顿主因）；
-     *  - utils.createMesh 仅支持 R16UI 索引（顶点 ≤ 65535），组内按 FX_MAX_TRIS_PER_SHARD
-     *    切块，避免超大模型单组顶点超限时索引静默回绕错画；
+     *  - 属性读取支持外部预读（preloaded）：读条期预缓存读一次、全部档位复用，避免每档
+     *    重复 readAttribute 全量拷贝；
+     *  - 组内按 FX_MAX_TRIS_PER_SHARD 切块规避 16 位索引上限（见常量注释）；
      *  - 档位已满时每个子网格仍至少保留 1 组，保证全覆盖、不漏画。
+     * @param root 模型根节点：来源节点以「模型内路径」记录（模型每次进入都是新实例，不能存引用）
      * @param shardCap 本次特效的碎片总量上限（碎裂三档为 10/60/120，其余为 FX_MAX_SHARDS）
-     * @return 本次生成的碎片模板数
+     * @param preloaded 外部预读的子网格属性（见 readSubMeshes），缺省则现场读取
+     * @return 本次生成的碎片数
      */
-    private extractShards(renderer: MeshRenderer, out: ShardTemplate[], shardCap: number): number {
+    private extractShards(
+        renderer: MeshRenderer,
+        root: Node,
+        out: ShardBlob[],
+        shardCap: number,
+        preloaded?: (SrcSubMesh | null)[],
+    ): number {
         const mesh = renderer.mesh;
         if (!mesh) return 0;
-        const mat = renderer.getMaterialInstance(0) ?? renderer.material;
-        const subCount = mesh.renderingSubMeshes.length;
-        const srcNode = renderer.node;
+        // 属性读取：优先用调用方预读的缓存（读一次切全部档位），否则现场读
+        const subs = preloaded ?? this.readSubMeshes(renderer);
+        const nodePath = nodePathWithin(renderer.node, root);
         let made = 0;
 
-        for (let s = 0; s < subCount; s++) {
-            // 顶点属性名（gfx.AttributeName 不在 cc 顶层导出，直接用其字符串值）
-            const positions = mesh.readAttribute(s, 'a_position') as Float32Array | null;
-            const normals = mesh.readAttribute(s, 'a_normal') as Float32Array | null;
-            const uvs = mesh.readAttribute(s, 'a_texCoord') as Float32Array | null;
-            const indices = mesh.readIndices(s);
-            if (!positions || !indices) continue;
+        for (let s = 0; s < subs.length; s++) {
+            const sub = subs[s];
+            if (!sub) continue;
+            const { positions, normals, uvs, indices } = sub;
 
             const triCount = Math.floor(indices.length / 3);
             if (triCount <= 0) continue;
@@ -1432,14 +1609,11 @@ export class Debug extends Component {
                     for (let d = 0; d < nv; d++) vMap[bufSrc[d]] = -1;
 
                     out.push({
-                        mesh: utils.createMesh({
-                            positions: bufPos.slice(0, nv * 3),
-                            normals: bufNor ? bufNor.slice(0, nv * 3) : undefined,
-                            uvs: bufUv ? bufUv.slice(0, nv * 2) : undefined,
-                            indices: bufIdx.slice(0, ni),
-                        }),
-                        material: mat,
-                        srcNode,
+                        nodePath,
+                        positions: bufPos.slice(0, nv * 3),
+                        normals: bufNor ? bufNor.slice(0, nv * 3) : null,
+                        uvs: bufUv ? bufUv.slice(0, nv * 2) : null,
+                        indices: bufIdx.slice(0, ni),
                     });
                     made++;
                 }

@@ -98,7 +98,7 @@ export class ShardStore {
      */
     public static set(prefabUuid: string, cap: number, list: ShardEntry[]): void {
         ShardStore.entries.set(ShardStore.keyOf(prefabUuid, cap), list);
-        if (!ShardStore.modelOrder.includes(prefabUuid)) {
+        if (ShardStore.modelOrder.indexOf(prefabUuid) < 0) {
             ShardStore.modelOrder.push(prefabUuid);
             while (ShardStore.modelOrder.length > ShardStore.maxModels) {
                 const victim = ShardStore.modelOrder.shift()!;
