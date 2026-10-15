@@ -29,6 +29,13 @@ export type BrustType =
     /** 3 坍缩：先扩张形成火球区域，短暂维持后突然向中心收缩 */
     | 'implode';
 
+/** 各类型整体存活时长（秒）：最后一批粒子消亡后节点自动销毁，调用方可用它对齐碎片寿命 */
+export const BRUST_TOTAL_LIFE: Record<BrustType, number> = {
+    burn: 4.2,
+    zone: 3.8,
+    implode: 2.0,
+};
+
 /** 单个发射器配置（ParticleSystem2D classic 属性子集） */
 interface EmitterConfig {
     totalParticles: number;
@@ -105,12 +112,12 @@ export class BrustExplosion extends Component {
             // 1 燃烧型：半速爆炸 + 持续火苗余烬
             this.buildExplosion(frame, systems);
             this.buildBurn(frame, systems);
-            totalLife = 4.2;
+            totalLife = BRUST_TOTAL_LIFE.burn;
         } else if (this._type === 'zone') {
             // 2 区域型：半速爆炸 + 同时铺开火球区域
             this.buildExplosion(frame, systems);
             this.buildZoneFire(frame, systems, this.node, 2.4);
-            totalLife = 3.8;
+            totalLife = BRUST_TOTAL_LIFE.zone;
         } else {
             // 3 坍缩型：初始闪光 + 火球区域扩张→维持→突然收缩
             totalLife = this.buildImplode(frame, systems);
@@ -310,7 +317,7 @@ export class BrustExplosion extends Component {
             flash.resetSystem();
         }, 1.3);
 
-        return 2.0;
+        return BRUST_TOTAL_LIFE.implode;
     }
 
     /** 按配置创建一个加法混合粒子发射器（默认挂在特效根节点，全向、无重力） */

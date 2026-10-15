@@ -38,7 +38,7 @@ import { fadeIn, fadeOutThen } from '../Common/UIAnim';
 import { paintTechButton, TechButtonKind, techTextColor, TechText } from '../Common/TechUI';
 import { allShardCaps, FX_MAX_SHARDS, FX_SHATTER_CAPS, ShardBlob, ShardEntry, ShardStore } from '../Common/ShardStore';
 import { extractShards, modelFingerprint, readSubMeshes, resolveNodePath, SrcSubMesh } from '../Common/ShardCutter';
-import { BrustExplosion } from '../Effect/Brust/BrustExplosion';
+import { BrustExplosion, BrustType, BRUST_TOTAL_LIFE } from '../Effect/Brust/BrustExplosion';
 
 const { ccclass } = _decorator;
 
@@ -56,8 +56,15 @@ const LOADING_BAR_H = 16;
 const LOADING_SPIN_R = 52;
 
 // ===== 解体特效参数 =====
-/** 解体模式：爆裂/碎裂(10/60/120 三档)/汽化/黑洞/旋风/切割/熔陷 */
-type FxMode = 'burst' | 'shatter10' | 'shatter60' | 'shatter120' | 'vaporize' | 'blackhole' | 'whirlwind' | 'slice' | 'sink';
+/** 解体模式：爆裂三型（燃烧/区域/坍缩）/碎裂(10/60/120 三档)/汽化/黑洞/旋风/切割/熔陷 */
+type FxMode = 'burstBurn' | 'burstZone' | 'burstImplode' | 'shatter10' | 'shatter60' | 'shatter120' | 'vaporize' | 'blackhole' | 'whirlwind' | 'slice' | 'sink';
+
+/** 爆裂系三模式 → 对应 BrustExplosion 粒子类型（碎片运动同为爆裂四散，仅爆炸视觉不同） */
+const FX_BRUST_TYPES: Record<'burstBurn' | 'burstZone' | 'burstImplode', BrustType> = {
+    burstBurn: 'burn',
+    burstZone: 'zone',
+    burstImplode: 'implode',
+};
 // 碎片档位常量（FX_SHATTER_CAPS / FX_MAX_SHARDS / allShardCaps）与切割算法
 // （extractShards / readSubMeshes / modelFingerprint / resolveNodePath）已移至
 // Common/ShardStore 与 Common/ShardCutter，供 Debug 与 Intro 开机预热共用
@@ -85,9 +92,8 @@ interface ShardRuntime {
 
 /** 碎片重力加速度（世界单位/秒²）：仅切割模式使用；爆裂/碎裂三档为太空无重力匀速四散，熔陷用 FX_SINK_GRAVITY */
 const FX_GRAVITY = 420;
-/** 爆裂模式：碎片初速度上限、生命周期（秒） */
+/** 爆裂模式：碎片初速度上限；生命周期与粒子特效时长对齐（BRUST_TOTAL_LIFE） */
 const FX_BURST_SPEED = 420;
-const FX_BURST_LIFE = 1.0;
 /** 爆裂震屏时长（秒）：爆裂瞬间按时间衰减地随机抖动主相机 */
 const FX_BURST_SHAKE_TIME = 0.6;
 /** 碎裂模式：碎片初速度上限、生命周期（秒） */
@@ -118,11 +124,13 @@ const FX_BTN_W = 116;
 const FX_BTN_H = 48;
 const FX_BTN_GAP = 10;
 /**
- * 击杀特效按钮（tab 0，游戏内击杀核心效果）：爆裂 + 碎裂三档。
+ * 击杀特效按钮（tab 0，游戏内击杀核心效果）：爆裂三型 + 碎裂三档。
  * 与完成度定格按钮同处一个 tab，是调试时最常看的一组。
  */
 const FX_KILL_BUTTONS: { name: string; label: string; mode: FxMode }[] = [
-    { name: 'BtnBurst', label: '爆裂', mode: 'burst' },
+    { name: 'BtnBurstBurn', label: '爆裂燃烧', mode: 'burstBurn' },
+    { name: 'BtnBurstZone', label: '爆裂区域', mode: 'burstZone' },
+    { name: 'BtnBurstImplode', label: '爆裂坍缩', mode: 'burstImplode' },
     { name: 'BtnShatter10', label: '碎裂×10', mode: 'shatter10' },
     { name: 'BtnShatter60', label: '碎裂×60', mode: 'shatter60' },
     { name: 'BtnShatter120', label: '碎裂×120', mode: 'shatter120' },
@@ -155,7 +163,9 @@ const FX_PROGRESS_BUTTONS: { name: string; label: string; k: number }[] = [
 ];
 /** 各模式状态栏文案：名称 + 解体动作描述 */
 const FX_LABELS: Record<FxMode, string> = {
-    burst: '爆裂',
+    burstBurn: '爆裂燃烧',
+    burstZone: '爆裂区域',
+    burstImplode: '爆裂坍缩',
     shatter10: '碎裂×10',
     shatter60: '碎裂×60',
     shatter120: '碎裂×120',
@@ -166,7 +176,9 @@ const FX_LABELS: Record<FxMode, string> = {
     sink: '熔陷',
 };
 const FX_VERBS: Record<FxMode, string> = {
-    burst: '飞溅而出',
+    burstBurn: '飞溅并持续燃烧',
+    burstZone: '飞溅，火球区域翻涌',
+    burstImplode: '飞溅后随火球坍缩',
     shatter10: '四散解体',
     shatter60: '四散解体',
     shatter120: '四散解体',
@@ -282,8 +294,8 @@ export class Debug extends Component {
     private spinNode: Node | null = null;
     /** 装饰弧当前旋转角（度），由 update 逐帧累加 */
     private spinAngle = 0;
-    /** 当前特效模式（7 种解体方式之一） */
-    private fxMode: FxMode = 'burst';
+    /** 当前特效模式（爆裂三型/碎裂三档/其他五种解体之一） */
+    private fxMode: FxMode = 'burstBurn';
     /** 碎片容器节点（挂在 modelRoot 下，特效期间存在） */
     private shardRoot: Node | null = null;
     /** 活动碎片列表（位置/速度由 update 驱动） */
@@ -378,7 +390,7 @@ export class Debug extends Component {
 
     /**
      * 创建特效按钮栏（预览区下方，tab 分组）：
-     * tab 0「击杀特效」：爆裂/碎裂三档 + 完成度定格（游戏击杀核心效果）；
+     * tab 0「击杀特效」：爆裂三型（燃烧/区域/坍缩）/碎裂三档 + 完成度定格（游戏击杀核心效果）；
      * tab 1「其他特效」：汽化/黑洞/旋风/切割/熔陷 + 引擎特效演示。
      * 每个 tab 内两排等宽按钮，切换 tab 只切容器 active（按钮常驻）。
      */
@@ -407,7 +419,7 @@ export class Debug extends Component {
             this.fxTabButtons.push(this.createFxTabButton(bar, 'Tab_' + label, label, x, tabY, i));
         });
 
-        // tab 0：击杀特效（爆裂/碎裂三档 + 完成度定格）
+        // tab 0：击杀特效（爆裂三型/碎裂三档 + 完成度定格）
         const killRoot = new Node('TabKill');
         killRoot.layer = UI_LAYER;
         bar.addChild(killRoot);
@@ -1147,11 +1159,12 @@ export class Debug extends Component {
         // 隐藏原模型，碎片接管展示
         model.active = false;
 
-        // 爆裂/切割模式：中央能量闪光冲击波
-        if (mode === 'burst' || mode === 'slice') this.createFlash();
-        if (mode === 'burst') {
-            // 爆裂专属：可复用圆形粒子火球（Effect/Brust）+ 暖色冲击波环 + 短促震屏
-            const brust = BrustExplosion.play(this.modelRoot);
+        // 爆裂三型/切割模式：中央能量闪光冲击波
+        const brustType = mode in FX_BRUST_TYPES ? FX_BRUST_TYPES[mode] : null;
+        if (brustType || mode === 'slice') this.createFlash();
+        if (brustType) {
+            // 爆裂专属：按类型播放可复用圆形粒子爆炸（Effect/Brust）+ 暖色冲击波环 + 短促震屏
+            const brust = BrustExplosion.play(this.modelRoot, { type: brustType });
             this.fxNodes.push(brust.node);
             this.createBurstShockRings();
             this.fxShakeLife = 0;
@@ -1597,11 +1610,14 @@ export class Debug extends Component {
             const ang = new Vec3();
             let maxLife: number;
             switch (mode) {
-                case 'burst':
-                    // 爆裂：高速飞溅 + 随机扰动，太空无重力——从模型中心各方向均匀四散飞出。
+                case 'burstBurn':
+                case 'burstZone':
+                case 'burstImplode':
+                    // 爆裂三型：高速飞溅 + 随机扰动，太空无重力——从模型中心各方向均匀四散飞出。
                     // 原 y 分量有 0.7 压扁 + 160 上扬偏置，是配合重力抛物线设计的；
-                    // 去重力后若保留会整体向上漂，故恢复为均匀球面速度
-                    maxLife = FX_BURST_LIFE;
+                    // 去重力后若保留会整体向上漂，故恢复为均匀球面速度。
+                    // 寿命与对应粒子爆炸等长：燃烧/区域的火焰和坍缩收缩播完前模型不恢复
+                    maxLife = BRUST_TOTAL_LIFE[FX_BRUST_TYPES[mode]];
                     {
                         const speed = FX_BURST_SPEED * (0.55 + Math.random() * 0.75);
                         vel.set(dir.x * speed, dir.y * speed, dir.z * speed);
@@ -1694,7 +1710,7 @@ export class Debug extends Component {
         if (this.shockRings.length > 0) this.updateShockRings(dt);
 
         // 爆裂震屏：主相机按时间衰减地随机抖动（定格冻结时继续衰减归位）
-        if (this.shakeCamera && this.shakeOrigin && this.fxMode === 'burst') {
+        if (this.shakeCamera && this.shakeOrigin && this.fxMode in FX_BRUST_TYPES) {
             this.fxShakeLife += dt;
             const decay = Math.max(0, 1 - this.fxShakeLife / FX_BURST_SHAKE_TIME);
             const amp = 30 * decay;
@@ -1760,11 +1776,13 @@ export class Debug extends Component {
         const p = sh.node.position;
         const e = sh.node.eulerAngles;
         switch (this.fxMode) {
-            case 'burst':
+            case 'burstBurn':
+            case 'burstZone':
+            case 'burstImplode':
             case 'shatter10':
             case 'shatter60':
             case 'shatter120':
-                // 太空场景：无重力，碎片沿初速度匀速四散漂移 + 自旋（碎裂为低速打滚）
+                // 太空场景：无重力，碎片沿初速度匀速四散漂移 + 自旋（爆裂高速/碎裂低速打滚）
                 sh.node.setPosition(p.x + sh.vel.x * dt, p.y + sh.vel.y * dt, p.z + sh.vel.z * dt);
                 sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
                 break;
