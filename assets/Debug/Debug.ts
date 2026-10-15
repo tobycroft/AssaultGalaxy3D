@@ -14,6 +14,7 @@ import {
     Label,
     Graphics,
     geometry,
+    Mesh,
     MeshRenderer,
     DirectionalLight,
     utils,
@@ -59,6 +60,18 @@ const FX_SHATTER_CAPS: Record<string, number> = {
     shatter60: 60,
     shatter120: 120,
 };
+/** 单碎片三角形数上限：3×21845 = 65535，恰为 utils.createMesh（R16UI 索引）的顶点数上限 */
+const FX_MAX_TRIS_PER_SHARD = 21845;
+/**
+ * 碎片模板：预提取的碎片网格 + 来源渲染节点 + 材质（按 模型+档位 缓存）。
+ * 网格顶点在渲染节点局部空间，播放时按来源节点当前世界矩阵实时换算放置
+ * （模型会自旋，矩阵不能缓存），从而同一模型重复播放不再重新切网格与上传显存。
+ */
+interface ShardTemplate {
+    mesh: Mesh;
+    material: Material | null;
+    srcNode: Node;
+}
 /** 碎片重力加速度（世界单位/秒²） */
 const FX_GRAVITY = 420;
 /** 爆裂模式：碎片初速度上限、生命周期（秒） */
@@ -206,6 +219,8 @@ export class Debug extends Component {
     private shardRoot: Node | null = null;
     /** 活动碎片列表（位置/速度由 update 驱动） */
     private shards: { node: Node; vel: Vec3; ang: Vec3; life: number; maxLife: number; baseScale: Vec3 }[] = [];
+    /** 碎片模板缓存：key = 模型节点 uuid|碎片档位，避免同一模型重复播放时重新切网格导致卡顿 */
+    private shardCache = new Map<string, ShardTemplate[]>();
     /** 爆裂/切割中央闪光（圆环，由 update 驱动放大淡出） */
     private fxFlash: { node: Node; life: number; maxLife: number } | null = null;
     /** 特效是否播放中（播放中禁止再次触发/切换） */
@@ -661,6 +676,8 @@ export class Debug extends Component {
     private displayModel(prefab: Prefab): void {
         // 切换模型前先复位特效（清理碎片/闪光，恢复模型可见性）
         this.resetFx();
+        // 旧模型即将销毁，其碎片模板（含 GPU 网格显存）一并释放，避免缓存悬挂与显存泄漏
+        this.shardCache.clear();
         this.clearModel();
         const model = instantiate(prefab);
         this.modelRoot!.addChild(model);
@@ -756,18 +773,28 @@ export class Debug extends Component {
         // 碎片总量上限：碎裂三档为 10/60/120，其余模式沿用默认上限
         const cap = FX_SHATTER_CAPS[mode] ?? FX_MAX_SHARDS;
 
-        // 遍历所有 MeshRenderer 提取碎片
-        const renderers = model.getComponentsInChildren(MeshRenderer);
-        let shardTotal = 0;
-        for (const r of renderers) {
-            shardTotal += this.extractShards(r, mode, shardRoot, shardTotal, cap);
+        // 碎片模板按 模型+档位 缓存：分组只取决于档位、与解体模式无关，
+        // 同一模型重复播放（或同档位切换模式）直接复用，不再重新切网格与上传显存
+        const key = `${model.uuid}|${cap}`;
+        let templates = this.shardCache.get(key);
+        if (!templates) {
+            templates = [];
+            // 遍历所有 MeshRenderer 提取碎片（切网格与模式无关，运动参数在生成节点时按模式赋予）
+            const renderers = model.getComponentsInChildren(MeshRenderer);
+            for (const r of renderers) {
+                this.extractShards(r, templates, cap);
+            }
+            if (templates.length === 0) {
+                shardRoot.destroy();
+                this.shardRoot = null;
+                this.setStatus('当前模型没有可碎裂的网格数据');
+                return;
+            }
+            this.shardCache.set(key, templates);
         }
-        if (this.shards.length === 0) {
-            shardRoot.destroy();
-            this.shardRoot = null;
-            this.setStatus('当前模型没有可碎裂的网格数据');
-            return;
-        }
+
+        // 由模板生成碎片节点并赋予运动参数
+        this.spawnShards(templates, mode);
 
         // 隐藏原模型，碎片接管展示
         model.active = false;
@@ -1154,16 +1181,23 @@ export class Debug extends Component {
     }
 
     /**
-     * 从单个 MeshRenderer 提取三角形碎片：读取网格顶点/索引，按每组 2~3 个三角形
-     * （总量受 shardCap 限制）拆成多个小 Mesh，各自挂节点用渲染节点世界矩阵定位，
-     * 并按模式赋予初速度与角速度。返回本次生成的碎片数。
+     * 从单个 MeshRenderer 提取三角形碎片：读取网格顶点/索引，按每组 2~3 个三角形左右
+     * （总量受 shardCap 限制）拆成多个小 Mesh，以模板形式写入 out（网格 + 材质 + 来源节点）。
+     * 切网格与解体模式无关（运动参数在 spawnShards 按模式赋予），故结果可按档位缓存复用。
+     * 大模型性能/正确性要点：
+     *  - 全程复用 TypedArray 缓冲区 + 整表索引去重，不用 Map 与 JS 数组（海量小分配是卡顿主因）；
+     *  - utils.createMesh 仅支持 R16UI 索引（顶点 ≤ 65535），组内按 FX_MAX_TRIS_PER_SHARD
+     *    切块，避免超大模型单组顶点超限时索引静默回绕错画；
+     *  - 档位已满时每个子网格仍至少保留 1 组，保证全覆盖、不漏画。
      * @param shardCap 本次特效的碎片总量上限（碎裂三档为 10/60/120，其余为 FX_MAX_SHARDS）
+     * @return 本次生成的碎片模板数
      */
-    private extractShards(renderer: MeshRenderer, mode: FxMode, shardRoot: Node, madeBefore: number, shardCap: number): number {
+    private extractShards(renderer: MeshRenderer, out: ShardTemplate[], shardCap: number): number {
         const mesh = renderer.mesh;
         if (!mesh) return 0;
         const mat = renderer.getMaterialInstance(0) ?? renderer.material;
         const subCount = mesh.renderingSubMeshes.length;
+        const srcNode = renderer.node;
         let made = 0;
 
         for (let s = 0; s < subCount; s++) {
@@ -1177,14 +1211,14 @@ export class Debug extends Component {
             const triCount = Math.floor(indices.length / 3);
             if (triCount <= 0) continue;
 
-            // 分组大小：总量不超过 shardCap（含之前渲染器已生成的）
-            const remain = shardCap - (madeBefore + made);
-            if (remain <= 0) break;
+            // 分组大小：目标不超过 shardCap（含之前渲染器已生成的）；
+            // 档位已满时也保证每个子网格至少 1 组，避免超出上限后整个子网格被漏画
+            const remain = Math.max(1, shardCap - out.length);
             const perGroup = Math.max(1, Math.ceil(triCount / remain));
 
             // 三角形顺序确定性打乱，让相邻面随机落入不同碎片
-            const order: number[] = [];
-            for (let t = 0; t < triCount; t++) order.push(t);
+            const order = new Int32Array(triCount);
+            for (let t = 0; t < triCount; t++) order[t] = t;
             for (let t = triCount - 1; t > 0; t--) {
                 const j = (t * 7919 + s * 104729 + made * 31) % (t + 1);
                 const tmp = order[t];
@@ -1192,126 +1226,166 @@ export class Debug extends Component {
                 order[j] = tmp;
             }
 
+            // 顶点去重scratch：源顶点索引 → 新索引，-1 为未使用（比 Map 快一个量级）
+            const vCount = positions.length / 3;
+            const vMap = new Int32Array(vCount).fill(-1);
+            // 组内还要按 16 位索引上限切块，缓冲区按块上限预分配一次，块间复用（避免每碎片重复分配）
+            const chunkTris = Math.min(perGroup, FX_MAX_TRIS_PER_SHARD);
+            const maxVerts = Math.min(vCount, chunkTris * 3);
+            const bufPos = new Float32Array(maxVerts * 3);
+            const bufNor = normals ? new Float32Array(maxVerts * 3) : null;
+            const bufUv = uvs ? new Float32Array(maxVerts * 2) : null;
+            const bufIdx = new Uint16Array(chunkTris * 3);
+            // 新索引 → 源顶点索引，用于块末归还去重槽位
+            const bufSrc = new Int32Array(maxVerts);
+
             for (let start = 0; start < triCount; start += perGroup) {
-                if (madeBefore + made >= shardCap) break;
-                const tris = order.slice(start, Math.min(start + perGroup, triCount));
-                if (tris.length === 0) continue;
-
-                // 收集该组三角形用到的顶点（去重），记录新索引
-                const vMap = new Map<number, number>();
-                const newPos: number[] = [];
-                const newNor: number[] = [];
-                const newUv: number[] = [];
-                const newIdx: number[] = [];
-                for (const t of tris) {
-                    for (let k = 0; k < 3; k++) {
-                        const src = indices[t * 3 + k];
-                        let dst = vMap.get(src);
-                        if (dst === undefined) {
-                            dst = newPos.length / 3;
-                            vMap.set(src, dst);
-                            newPos.push(positions[src * 3], positions[src * 3 + 1], positions[src * 3 + 2]);
-                            if (normals) newNor.push(normals[src * 3], normals[src * 3 + 1], normals[src * 3 + 2]);
-                            if (uvs) newUv.push(uvs[src * 2], uvs[src * 2 + 1]);
+                const end = Math.min(start + perGroup, triCount);
+                // 组内按 16 位索引顶点上限再切块：超大模型 + 小档位时单组顶点会超 65535，
+                // utils.createMesh 仅支持 R16UI 索引，不切块会静默回绕错画（原实现的隐患）
+                for (let cs = start; cs < end; cs += FX_MAX_TRIS_PER_SHARD) {
+                    const ce = Math.min(cs + FX_MAX_TRIS_PER_SHARD, end);
+                    let nv = 0;
+                    let ni = 0;
+                    for (let t = cs; t < ce; t++) {
+                        const tri = order[t] * 3;
+                        for (let k = 0; k < 3; k++) {
+                            const src = indices[tri + k];
+                            let dst = vMap[src];
+                            if (dst === undefined || dst < 0) {
+                                dst = nv++;
+                                vMap[src] = dst;
+                                bufSrc[dst] = src;
+                                const p3 = src * 3;
+                                bufPos[dst * 3] = positions[p3];
+                                bufPos[dst * 3 + 1] = positions[p3 + 1];
+                                bufPos[dst * 3 + 2] = positions[p3 + 2];
+                                if (bufNor && normals) {
+                                    bufNor[dst * 3] = normals[p3];
+                                    bufNor[dst * 3 + 1] = normals[p3 + 1];
+                                    bufNor[dst * 3 + 2] = normals[p3 + 2];
+                                }
+                                if (bufUv && uvs) {
+                                    const t2 = src * 2;
+                                    bufUv[dst * 2] = uvs[t2];
+                                    bufUv[dst * 2 + 1] = uvs[t2 + 1];
+                                }
+                            }
+                            bufIdx[ni++] = dst;
                         }
-                        newIdx.push(dst);
                     }
+                    // 归还去重槽位（仅重置本块用到的，O(nv)）
+                    for (let d = 0; d < nv; d++) vMap[bufSrc[d]] = -1;
+
+                    out.push({
+                        mesh: utils.createMesh({
+                            positions: bufPos.slice(0, nv * 3),
+                            normals: bufNor ? bufNor.slice(0, nv * 3) : undefined,
+                            uvs: bufUv ? bufUv.slice(0, nv * 2) : undefined,
+                            indices: bufIdx.slice(0, ni),
+                        }),
+                        material: mat,
+                        srcNode,
+                    });
+                    made++;
                 }
-
-                // 碎片局部中心不再单独计算：方向基准直接用碎片节点本地坐标（见下）
-
-                const m = utils.createMesh({
-                    positions: newPos,
-                    normals: newNor.length > 0 ? newNor : undefined,
-                    uvs: newUv.length > 0 ? newUv : undefined,
-                    indices: new Uint16Array(newIdx),
-                });
-                const n = new Node('Shard');
-                n.layer = MODEL_LAYER;
-                shardRoot.addChild(n);
-                // Node.matrix setter 直接存本地矩阵（不按父变换换算），
-                // 需先把渲染节点的世界矩阵换算到 modelRoot 空间再传入，
-                // 顶点是渲染节点局部坐标，这样碎片恰好原位呈现
-                const localMatrix = Mat4.multiply(
-                    new Mat4(),
-                    Mat4.invert(new Mat4(), this.modelRoot!.worldMatrix),
-                    renderer.node.worldMatrix,
-                );
-                n.matrix = localMatrix;
-                // 记录初始缩放（来自渲染节点世界矩阵换算），尾部缩放在此基础上叠加
-                const baseScale = new Vec3(n.scale.x, n.scale.y, n.scale.z);
-                const mr = n.addComponent(MeshRenderer);
-                mr.mesh = m;
-                if (mat) mr.material = mat;
-
-                // 方向：碎片本地坐标相对 modelRoot 原点（shardRoot 无附加变换，本地即模型空间）
-                const dir = new Vec3(n.position.x, n.position.y, n.position.z);
-                if (dir.lengthSqr() < 1e-4) dir.set(Math.random() - 0.5, Math.random(), Math.random() - 0.5);
-                dir.normalize();
-
-                // 初速度与角速度（按模式区分）
-                const vel = new Vec3();
-                const ang = new Vec3();
-                let maxLife: number;
-                switch (mode) {
-                    case 'burst':
-                        // 爆裂：高速飞溅 + 上扬 + 大随机扰动
-                        maxLife = FX_BURST_LIFE;
-                        {
-                            const speed = FX_BURST_SPEED * (0.55 + Math.random() * 0.75);
-                            vel.set(dir.x * speed, dir.y * speed * 0.7 + 160 * Math.random(), dir.z * speed);
-                            vel.x += (Math.random() - 0.5) * 160;
-                            vel.z += (Math.random() - 0.5) * 160;
-                            ang.set((Math.random() - 0.5) * 720, (Math.random() - 0.5) * 720, (Math.random() - 0.5) * 720);
-                        }
-                        break;
-                    case 'shatter10':
-                    case 'shatter60':
-                    case 'shatter120':
-                        // 碎裂（10/60/120 三档）：低速塌落 + 打滚，运动参数一致，仅碎片数不同
-                        maxLife = FX_SHATTER_LIFE;
-                        {
-                            const speed = FX_SHATTER_SPEED * (0.4 + Math.random() * 0.8);
-                            vel.set(dir.x * speed + (Math.random() - 0.5) * 60, dir.y * speed * 0.5 + 40, dir.z * speed + (Math.random() - 0.5) * 60);
-                            ang.set((Math.random() - 0.5) * 260, (Math.random() - 0.5) * 260, (Math.random() - 0.5) * 260);
-                        }
-                        break;
-                    case 'vaporize':
-                        // 汽化：原位不动，仅微旋（缩小由 updateFx 统一驱动）
-                        maxLife = FX_VAPORIZE_LIFE;
-                        ang.set((Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40);
-                        break;
-                    case 'blackhole':
-                        // 黑洞：初速为 0，向心加速度在 updateFx 中持续施加
-                        maxLife = FX_BLACKHOLE_LIFE;
-                        ang.set((Math.random() - 0.5) * 300, (Math.random() - 0.5) * 300, (Math.random() - 0.5) * 300);
-                        break;
-                    case 'whirlwind':
-                        // 旋风：初速为 0，螺旋运动在 updateFx 中按位置旋转驱动
-                        maxLife = FX_WHIRLWIND_LIFE;
-                        ang.set((Math.random() - 0.5) * 300, (Math.random() - 0.5) * 300, (Math.random() - 0.5) * 300);
-                        break;
-                    case 'slice':
-                        // 切割：按所在侧（x 正负）反向分离，绕竖轴翻转
-                        maxLife = FX_SLICE_LIFE;
-                        {
-                            const sign = n.position.x >= 0 ? 1 : -1;
-                            const speed = FX_SLICE_SPEED * (0.7 + Math.random() * 0.6);
-                            vel.set(sign * speed, (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 20);
-                            ang.set(0, sign * (4 + Math.random() * 3), 0);
-                        }
-                        break;
-                    case 'sink':
-                        // 熔陷：初速为 0，垂直加速下沉（updateFx 中触底钳制）
-                        maxLife = FX_SINK_LIFE;
-                        ang.set((Math.random() - 0.5) * 60, (Math.random() - 0.5) * 60, (Math.random() - 0.5) * 60);
-                        break;
-                }
-                this.shards.push({ node: n, vel, ang, life: 0, maxLife, baseScale });
-                made++;
             }
         }
         return made;
+    }
+
+    /**
+     * 由碎片模板生成碎片节点：按来源渲染节点的当前世界矩阵放置（模型会自旋，
+     * 矩阵必须实时换算，不能沿用提取时的朝向），挂网格/材质，
+     * 碎片局部中心不单独计算：方向基准直接用碎片节点本地坐标。
+     */
+    private spawnShards(templates: ShardTemplate[], mode: FxMode): void {
+        const root = this.shardRoot;
+        const modelRoot = this.modelRoot;
+        if (!root || !modelRoot) return;
+        // modelRoot 世界矩阵的逆矩阵只算一次（原来每个碎片各算一遍）
+        const rootInv = Mat4.invert(new Mat4(), modelRoot.worldMatrix);
+
+        for (const tpl of templates) {
+            const n = new Node('Shard');
+            n.layer = MODEL_LAYER;
+            root.addChild(n);
+            // Node.matrix setter 直接存本地矩阵（不按父变换换算），
+            // 需先把渲染节点的世界矩阵换算到 modelRoot 空间再传入，
+            // 顶点是渲染节点局部坐标，这样碎片恰好原位呈现
+            const localMatrix = Mat4.multiply(new Mat4(), rootInv, tpl.srcNode.worldMatrix);
+            n.matrix = localMatrix;
+            // 记录初始缩放（来自渲染节点世界矩阵换算），尾部缩放在此基础上叠加
+            const baseScale = new Vec3(n.scale.x, n.scale.y, n.scale.z);
+            const mr = n.addComponent(MeshRenderer);
+            mr.mesh = tpl.mesh;
+            if (tpl.material) mr.material = tpl.material;
+
+            // 方向：碎片本地坐标相对 modelRoot 原点（shardRoot 无附加变换，本地即模型空间）
+            const dir = new Vec3(n.position.x, n.position.y, n.position.z);
+            if (dir.lengthSqr() < 1e-4) dir.set(Math.random() - 0.5, Math.random(), Math.random() - 0.5);
+            dir.normalize();
+
+            // 初速度与角速度（按模式区分）
+            const vel = new Vec3();
+            const ang = new Vec3();
+            let maxLife: number;
+            switch (mode) {
+                case 'burst':
+                    // 爆裂：高速飞溅 + 上扬 + 大随机扰动
+                    maxLife = FX_BURST_LIFE;
+                    {
+                        const speed = FX_BURST_SPEED * (0.55 + Math.random() * 0.75);
+                        vel.set(dir.x * speed, dir.y * speed * 0.7 + 160 * Math.random(), dir.z * speed);
+                        vel.x += (Math.random() - 0.5) * 160;
+                        vel.z += (Math.random() - 0.5) * 160;
+                        ang.set((Math.random() - 0.5) * 720, (Math.random() - 0.5) * 720, (Math.random() - 0.5) * 720);
+                    }
+                    break;
+                case 'shatter10':
+                case 'shatter60':
+                case 'shatter120':
+                    // 碎裂（10/60/120 三档）：低速塌落 + 打滚，运动参数一致，仅碎片数不同
+                    maxLife = FX_SHATTER_LIFE;
+                    {
+                        const speed = FX_SHATTER_SPEED * (0.4 + Math.random() * 0.8);
+                        vel.set(dir.x * speed + (Math.random() - 0.5) * 60, dir.y * speed * 0.5 + 40, dir.z * speed + (Math.random() - 0.5) * 60);
+                        ang.set((Math.random() - 0.5) * 260, (Math.random() - 0.5) * 260, (Math.random() - 0.5) * 260);
+                    }
+                    break;
+                case 'vaporize':
+                    // 汽化：原位不动，仅微旋（缩小由 updateFx 统一驱动）
+                    maxLife = FX_VAPORIZE_LIFE;
+                    ang.set((Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40);
+                    break;
+                case 'blackhole':
+                    // 黑洞：初速为 0，向心加速度在 updateFx 中持续施加
+                    maxLife = FX_BLACKHOLE_LIFE;
+                    ang.set((Math.random() - 0.5) * 300, (Math.random() - 0.5) * 300, (Math.random() - 0.5) * 300);
+                    break;
+                case 'whirlwind':
+                    // 旋风：初速为 0，螺旋运动在 updateFx 中按位置旋转驱动
+                    maxLife = FX_WHIRLWIND_LIFE;
+                    ang.set((Math.random() - 0.5) * 300, (Math.random() - 0.5) * 300, (Math.random() - 0.5) * 300);
+                    break;
+                case 'slice':
+                    // 切割：按所在侧（x 正负）反向分离，绕竖轴翻转
+                    maxLife = FX_SLICE_LIFE;
+                    {
+                        const sign = n.position.x >= 0 ? 1 : -1;
+                        const speed = FX_SLICE_SPEED * (0.7 + Math.random() * 0.6);
+                        vel.set(sign * speed, (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 20);
+                        ang.set(0, sign * (4 + Math.random() * 3), 0);
+                    }
+                    break;
+                case 'sink':
+                    // 熔陷：初速为 0，垂直加速下沉（updateFx 中触底钳制）
+                    maxLife = FX_SINK_LIFE;
+                    ang.set((Math.random() - 0.5) * 60, (Math.random() - 0.5) * 60, (Math.random() - 0.5) * 60);
+                    break;
+            }
+            this.shards.push({ node: n, vel, ang, life: 0, maxLife, baseScale });
+        }
     }
 
     /** 爆裂中央闪光：圆环快速放大并淡出（update 驱动） */
