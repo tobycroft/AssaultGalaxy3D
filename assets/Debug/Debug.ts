@@ -72,7 +72,7 @@ interface ShardTemplate {
     srcNode: Node;
 }
 
-/** 碎片重力加速度（世界单位/秒²） */
+/** 碎片重力加速度（世界单位/秒²）：仅碎裂三档与切割模式使用；爆裂为太空无重力匀速四散，熔陷用 FX_SINK_GRAVITY */
 const FX_GRAVITY = 420;
 /** 爆裂模式：碎片初速度上限、生命周期（秒） */
 const FX_BURST_SPEED = 420;
@@ -1446,11 +1446,13 @@ export class Debug extends Component {
             let maxLife: number;
             switch (mode) {
                 case 'burst':
-                    // 爆裂：高速飞溅 + 上扬 + 大随机扰动
+                    // 爆裂：高速飞溅 + 随机扰动，太空无重力——从模型中心各方向均匀四散飞出。
+                    // 原 y 分量有 0.7 压扁 + 160 上扬偏置，是配合重力抛物线设计的；
+                    // 去重力后若保留会整体向上漂，故恢复为均匀球面速度
                     maxLife = FX_BURST_LIFE;
                     {
                         const speed = FX_BURST_SPEED * (0.55 + Math.random() * 0.75);
-                        vel.set(dir.x * speed, dir.y * speed * 0.7 + 160 * Math.random(), dir.z * speed);
+                        vel.set(dir.x * speed, dir.y * speed, dir.z * speed);
                         vel.x += (Math.random() - 0.5) * 160;
                         vel.z += (Math.random() - 0.5) * 160;
                         ang.set((Math.random() - 0.5) * 720, (Math.random() - 0.5) * 720, (Math.random() - 0.5) * 720);
@@ -1563,6 +1565,10 @@ export class Debug extends Component {
             const e = sh.node.eulerAngles;
             switch (this.fxMode) {
                 case 'burst':
+                    // 爆裂（太空场景）：无重力，碎片沿初速度方向匀速四散飞出 + 自旋
+                    sh.node.setPosition(p.x + sh.vel.x * dt, p.y + sh.vel.y * dt, p.z + sh.vel.z * dt);
+                    sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
+                    break;
                 case 'shatter10':
                 case 'shatter60':
                 case 'shatter120':
