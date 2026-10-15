@@ -72,6 +72,16 @@ interface ShardTemplate {
     srcNode: Node;
 }
 
+/** 活动碎片运行时状态：节点 + 速度/角速度/生命期（位置与旋转由 update 驱动） */
+interface ShardRuntime {
+    node: Node;
+    vel: Vec3;
+    ang: Vec3;
+    life: number;
+    maxLife: number;
+    baseScale: Vec3;
+}
+
 /** 碎片重力加速度（世界单位/秒²）：仅切割模式使用；爆裂/碎裂三档为太空无重力匀速四散，熔陷用 FX_SINK_GRAVITY */
 const FX_GRAVITY = 420;
 /** 爆裂模式：碎片初速度上限、生命周期（秒） */
@@ -115,6 +125,15 @@ const FX_BUTTONS: { name: string; label: string; mode: FxMode }[] = [
     { name: 'BtnWhirlwind', label: '旋风', mode: 'whirlwind' },
     { name: 'BtnSlice', label: '切割', mode: 'slice' },
     { name: 'BtnSink', label: '熔陷', mode: 'sink' },
+];
+/**
+ * 完成度定格按钮：播放当前解体特效并把动画直接推进到指定完成度并冻结
+ * （调试用：查看碎裂炸到 50%/80%/100% 时的形态，碎片停住不继续运动）。
+ */
+const FX_PROGRESS_BUTTONS: { name: string; label: string; k: number }[] = [
+    { name: 'BtnProg50', label: '碎裂50%', k: 0.5 },
+    { name: 'BtnProg80', label: '碎裂80%', k: 0.8 },
+    { name: 'BtnProg100', label: '碎裂100%', k: 1 },
 ];
 /** 各模式状态栏文案：名称 + 解体动作描述 */
 const FX_LABELS: Record<FxMode, string> = {
@@ -250,7 +269,12 @@ export class Debug extends Component {
     /** 碎片容器节点（挂在 modelRoot 下，特效期间存在） */
     private shardRoot: Node | null = null;
     /** 活动碎片列表（位置/速度由 update 驱动） */
-    private shards: { node: Node; vel: Vec3; ang: Vec3; life: number; maxLife: number; baseScale: Vec3 }[] = [];
+    private shards: ShardRuntime[] = [];
+    /**
+     * 特效冻结中（完成度定格）：true 时 updateFx 跳过碎片推进，画面停在该完成度，
+     * 模型保持隐藏、碎片保持散开状态；点击其他特效按钮或切换模型时经 resetFx 解除。
+     */
+    private fxFrozen = false;
     /**
      * 当前模型的 prefab 资源 uuid：碎片缓存 key 用它而非实例 node.uuid——
      * 模型每次进场景都是 instantiate 出来的新实例，实例 uuid 每次都变、跨场景必 miss。
@@ -331,20 +355,23 @@ export class Debug extends Component {
      * 未选中模型或特效播放中时置灰（点击由 playFx 拦截）。
      */
     /**
-     * 创建特效按钮栏（预览区下方两排）：
-     * 第一排 7 个解体特效，第二排 8 个引擎特效演示，均为等宽按钮。
+     * 创建特效按钮栏（预览区下方三排）：
+     * 第一排解体特效，第二排引擎特效演示，第三排碎裂完成度定格，均为等宽按钮。
      */
     private createEffectBar(): void {
         const n = FX_BUTTONS.length;
         const m = ENGINE_FX_BUTTONS.length;
-        // 每排按自身按钮数居中布局，容器取两排较宽者
+        const p = FX_PROGRESS_BUTTONS.length;
+        // 每排按自身按钮数居中布局，容器取三排较宽者
         const w1 = n * FX_BTN_W + (n - 1) * FX_BTN_GAP;
         const w2 = m * FX_BTN_W + (m - 1) * FX_BTN_GAP;
-        const totalW = Math.max(w1, w2);
+        const w3 = p * FX_BTN_W + (p - 1) * FX_BTN_GAP;
+        const totalW = Math.max(w1, w2, w3);
         const bar = new Node('EffectBar');
         bar.layer = UI_LAYER;
-        bar.addComponent(UITransform).setContentSize(totalW, FX_BTN_H * 2 + 10);
-        bar.setPosition(0, -296, 0);
+        bar.addComponent(UITransform).setContentSize(totalW, FX_BTN_H * 3 + 20);
+        // 三排后容器变高，位置上移保证底边不出画布（半高 360）
+        bar.setPosition(0, -278, 0);
         this.node.addChild(bar);
 
         // 第一排：解体特效
@@ -356,6 +383,11 @@ export class Debug extends Component {
         ENGINE_FX_BUTTONS.forEach((def, i) => {
             const x = -w2 / 2 + FX_BTN_W / 2 + i * (FX_BTN_W + FX_BTN_GAP);
             this.fxButtons.push(this.createFxButton(bar, def.name, def.label, x, -FX_BTN_H / 2 - 5, () => this.playEngineFx(def.kind)));
+        });
+        // 第三排：碎裂完成度定格（播放当前解体特效并冻结在指定完成度）
+        FX_PROGRESS_BUTTONS.forEach((def, i) => {
+            const x = -w3 / 2 + FX_BTN_W / 2 + i * (FX_BTN_W + FX_BTN_GAP);
+            this.fxButtons.push(this.createFxButton(bar, def.name, def.label, x, -FX_BTN_H * 1.5 - 15, () => this.freezeProgress(def.k)));
         });
         this.refreshFxButtons();
     }
@@ -386,9 +418,9 @@ export class Debug extends Component {
         return btn;
     }
 
-    /** 刷新特效按钮可用态：已选中模型且特效未播放时正常，否则置灰 */
+    /** 刷新特效按钮可用态：已选中模型且特效未播放（或冻结定格中，可点击解除）时正常，否则置灰 */
     private refreshFxButtons(): void {
-        const usable = !!this.currentModel && !this.fxRunning;
+        const usable = !!this.currentModel && (!this.fxRunning || this.fxFrozen);
         const apply = (btn: Node | null): void => {
             if (!btn) return;
             let o = btn.getComponent(UIOpacity);
@@ -966,7 +998,8 @@ export class Debug extends Component {
      * 播放完毕后恢复原模型。播放中/未选中模型时忽略点击。
      */
     private playFx(mode: FxMode): void {
-        if (this.fxRunning) {
+        // 冻结定格中允许点击切换（重新播放并解除冻结），仅正常播放中拦截
+        if (this.fxRunning && !this.fxFrozen) {
             this.setStatus('特效播放中，请稍候…');
             return;
         }
@@ -1044,7 +1077,8 @@ export class Debug extends Component {
      * 与解体特效互斥（共用 fxRunning），播放中/未选中模型时忽略点击。
      */
     private playEngineFx(kind: EngineFxKind): void {
-        if (this.fxRunning) {
+        // 冻结定格中允许点击切换（重新播放并解除冻结），仅正常播放中拦截
+        if (this.fxRunning && !this.fxFrozen) {
             this.setStatus('特效播放中，请稍候…');
             return;
         }
@@ -1556,73 +1590,17 @@ export class Debug extends Component {
             this.updateEngineFx(dt);
             return;
         }
+        // 完成度定格：碎片停住（上方闪光不受冻结影响，可自行播完消失）
+        if (this.fxFrozen) return;
         for (const sh of this.shards) {
             sh.life += dt;
             if (sh.life >= sh.maxLife) {
                 sh.node.destroy();
                 continue;
             }
-            const k = sh.life / sh.maxLife;
-            const p = sh.node.position;
-            const e = sh.node.eulerAngles;
-            switch (this.fxMode) {
-                case 'burst':
-                case 'shatter10':
-                case 'shatter60':
-                case 'shatter120':
-                    // 太空场景：无重力，碎片沿初速度匀速四散漂移 + 自旋（碎裂为低速打滚）
-                    sh.node.setPosition(p.x + sh.vel.x * dt, p.y + sh.vel.y * dt, p.z + sh.vel.z * dt);
-                    sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
-                    break;
-                case 'slice':
-                    // 切割：重力抛物线 + 位移（shardRoot 无附加变换，本地速度即世界速度）
-                    sh.vel.y -= FX_GRAVITY * dt;
-                    sh.node.setPosition(p.x + sh.vel.x * dt, p.y + sh.vel.y * dt, p.z + sh.vel.z * dt);
-                    sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
-                    break;
-                case 'vaporize':
-                    // 汽化：原位微旋，缩小在下方统一处理
-                    sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
-                    break;
-                case 'blackhole': {
-                    // 黑洞：朝 modelRoot 原点持续加速（速度钳制），靠近后越吸越快
-                    const to = new Vec3(-p.x, -p.y, -p.z);
-                    const d = to.length();
-                    if (d > 1) {
-                        to.multiplyScalar(1 / d);
-                        sh.vel.add(to.multiplyScalar(FX_BLACKHOLE_G * dt));
-                        const sp = sh.vel.length();
-                        if (sp > FX_BLACKHOLE_MAX_SPEED) sh.vel.multiplyScalar(FX_BLACKHOLE_MAX_SPEED / sp);
-                    }
-                    sh.node.setPosition(p.x + sh.vel.x * dt, p.y + sh.vel.y * dt, p.z + sh.vel.z * dt);
-                    sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
-                    break;
-                }
-                case 'whirlwind': {
-                    // 旋风：位置绕 y 轴螺旋旋转 + 上升 + 径向外扩
-                    const th = FX_WHIRLWIND_OMEGA * dt;
-                    const cos = Math.cos(th);
-                    const sin = Math.sin(th);
-                    const nx = p.x * cos - p.z * sin;
-                    const nz = p.x * sin + p.z * cos;
-                    const spread = 1 + FX_WHIRLWIND_SPREAD * dt;
-                    sh.node.setPosition(nx * spread, p.y + FX_WHIRLWIND_UP * dt, nz * spread);
-                    sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
-                    break;
-                }
-                case 'sink':
-                    // 熔陷：垂直加速下沉，触底后停住（缩小在下方按 80% 后处理）
-                    sh.vel.y -= FX_SINK_GRAVITY * dt;
-                    let ny = p.y + sh.vel.y * dt;
-                    if (ny < FX_SINK_FLOOR) {
-                        ny = FX_SINK_FLOOR;
-                        sh.vel.y = 0;
-                    }
-                    sh.node.setPosition(p.x, ny, p.z);
-                    sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
-                    break;
-            }
+            this.stepShardMotion(sh, dt);
             // 缩小消失：汽化全程线性缩小；熔陷触底后（80% 起）缩小；其余尾部 30% 缩小
+            const k = sh.life / sh.maxLife;
             if (this.fxMode === 'vaporize') {
                 const s = Math.max(0, 1 - k);
                 sh.node.setScale(sh.baseScale.x * s, sh.baseScale.y * s, sh.baseScale.z * s);
@@ -1637,6 +1615,113 @@ export class Debug extends Component {
         if (this.shards.length === 0 && !this.fxFlash) {
             this.finishFx();
         }
+    }
+
+    /**
+     * 单片碎片的运动积分一步（位移 + 旋转，按当前模式；不含生命期累加、销毁与尾部缩小）。
+     * updateFx 逐帧调用；完成度快进（freezeAtProgress）也按小步长反复调用，
+     * 因此任意模式（含黑洞/旋风/熔陷等积分型运动）都能正确推进到指定完成度。
+     */
+    private stepShardMotion(sh: ShardRuntime, dt: number): void {
+        const p = sh.node.position;
+        const e = sh.node.eulerAngles;
+        switch (this.fxMode) {
+            case 'burst':
+            case 'shatter10':
+            case 'shatter60':
+            case 'shatter120':
+                // 太空场景：无重力，碎片沿初速度匀速四散漂移 + 自旋（碎裂为低速打滚）
+                sh.node.setPosition(p.x + sh.vel.x * dt, p.y + sh.vel.y * dt, p.z + sh.vel.z * dt);
+                sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
+                break;
+            case 'slice':
+                // 切割：重力抛物线 + 位移（shardRoot 无附加变换，本地速度即世界速度）
+                sh.vel.y -= FX_GRAVITY * dt;
+                sh.node.setPosition(p.x + sh.vel.x * dt, p.y + sh.vel.y * dt, p.z + sh.vel.z * dt);
+                sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
+                break;
+            case 'vaporize':
+                // 汽化：原位微旋，缩小在下方统一处理
+                sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
+                break;
+            case 'blackhole': {
+                // 黑洞：朝 modelRoot 原点持续加速（速度钳制），靠近后越吸越快
+                const to = new Vec3(-p.x, -p.y, -p.z);
+                const d = to.length();
+                if (d > 1) {
+                    to.multiplyScalar(1 / d);
+                    sh.vel.add(to.multiplyScalar(FX_BLACKHOLE_G * dt));
+                    const sp = sh.vel.length();
+                    if (sp > FX_BLACKHOLE_MAX_SPEED) sh.vel.multiplyScalar(FX_BLACKHOLE_MAX_SPEED / sp);
+                }
+                sh.node.setPosition(p.x + sh.vel.x * dt, p.y + sh.vel.y * dt, p.z + sh.vel.z * dt);
+                sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
+                break;
+            }
+            case 'whirlwind': {
+                // 旋风：位置绕 y 轴螺旋旋转 + 上升 + 径向外扩
+                const th = FX_WHIRLWIND_OMEGA * dt;
+                const cos = Math.cos(th);
+                const sin = Math.sin(th);
+                const nx = p.x * cos - p.z * sin;
+                const nz = p.x * sin + p.z * cos;
+                const spread = 1 + FX_WHIRLWIND_SPREAD * dt;
+                sh.node.setPosition(nx * spread, p.y + FX_WHIRLWIND_UP * dt, nz * spread);
+                sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
+                break;
+            }
+            case 'sink':
+                // 熔陷：垂直加速下沉，触底后停住（缩小在下方按 80% 后处理）
+                sh.vel.y -= FX_SINK_GRAVITY * dt;
+                let ny = p.y + sh.vel.y * dt;
+                if (ny < FX_SINK_FLOOR) {
+                    ny = FX_SINK_FLOOR;
+                    sh.vel.y = 0;
+                }
+                sh.node.setPosition(p.x, ny, p.z);
+                sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
+                break;
+        }
+    }
+
+    /**
+     * 完成度按钮：播放当前解体特效，并把动画直接推进到指定完成度 k∈[0,1] 后冻结
+     * （从零开始定格，已在播放/冻结中也会重播，保证状态可重复查看）。
+     */
+    private freezeProgress(k: number): void {
+        if (!this.currentModel) {
+            this.setStatus('请先在左侧选择一个模型');
+            return;
+        }
+        // 正常播放中不可插入定格（与 playFx 门控一致；冻结中放行——会重播后重新定格）
+        if (this.fxRunning && !this.fxFrozen) {
+            this.setStatus('特效播放中，请稍候…');
+            return;
+        }
+        this.playFx(this.fxMode);
+        if (!this.fxRunning) return; // 无网格数据等失败情况（playFx 已提示）
+        this.freezeAtProgress(k);
+    }
+
+    /**
+     * 将当前解体特效步进到指定完成度并冻结：逐碎片按 1/60 秒步长推进运动积分
+     * （最大 1.8s ≈ 108 步，一次性完成无分帧必要），不执行尾部缩小与销毁——
+     * 完成度关注的是碎裂散开形态；完成后置 fxFrozen，updateFx 跳过推进，
+     * 模型保持隐藏、碎片停在该完成度，直到点击其他特效按钮/切换模型（resetFx 解除）。
+     */
+    private freezeAtProgress(k: number): void {
+        const step = 1 / 60;
+        for (const sh of this.shards) {
+            const target = Math.min(sh.maxLife, Math.max(sh.life, k * sh.maxLife));
+            while (sh.life < target) {
+                const d = Math.min(step, target - sh.life);
+                sh.life += d;
+                this.stepShardMotion(sh, d);
+            }
+        }
+        this.fxFrozen = true;
+        this.refreshFxButtons();
+        this.setStatus(`已定格 ${Math.round(k * 100)}% 完成度，点击其他特效按钮解除并继续`);
     }
 
     /** 特效自然结束：恢复原模型可见，清理容器 */
@@ -1656,6 +1741,7 @@ export class Debug extends Component {
     /** 立即复位特效（切换模型/退出场景前调用）：清理碎片与闪光，恢复模型可见 */
     private resetFx(): void {
         this.fxRunning = false;
+        this.fxFrozen = false;
         for (const sh of this.shards) sh.node.destroy();
         this.shards = [];
         if (this.shardRoot) {
