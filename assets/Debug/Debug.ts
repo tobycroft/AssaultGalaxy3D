@@ -114,18 +114,30 @@ const FX_FLASH_LIFE = 0.45;
 const FX_BTN_W = 116;
 const FX_BTN_H = 48;
 const FX_BTN_GAP = 10;
-/** 特效按钮定义（名称/文案/模式） */
-const FX_BUTTONS: { name: string; label: string; mode: FxMode }[] = [
+/**
+ * 击杀特效按钮（tab 0，游戏内击杀核心效果）：爆裂 + 碎裂三档。
+ * 与完成度定格按钮同处一个 tab，是调试时最常看的一组。
+ */
+const FX_KILL_BUTTONS: { name: string; label: string; mode: FxMode }[] = [
     { name: 'BtnBurst', label: '爆裂', mode: 'burst' },
     { name: 'BtnShatter10', label: '碎裂×10', mode: 'shatter10' },
     { name: 'BtnShatter60', label: '碎裂×60', mode: 'shatter60' },
     { name: 'BtnShatter120', label: '碎裂×120', mode: 'shatter120' },
+];
+/** 其他解体特效按钮（tab 1）：汽化 / 黑洞 / 旋风 / 切割 / 熔陷 */
+const FX_OTHER_BUTTONS: { name: string; label: string; mode: FxMode }[] = [
     { name: 'BtnVaporize', label: '汽化', mode: 'vaporize' },
     { name: 'BtnBlackhole', label: '黑洞', mode: 'blackhole' },
     { name: 'BtnWhirlwind', label: '旋风', mode: 'whirlwind' },
     { name: 'BtnSlice', label: '切割', mode: 'slice' },
     { name: 'BtnSink', label: '熔陷', mode: 'sink' },
 ];
+/** 特效 tab 行：按钮宽 / 高 / 间距（比特效按钮矮一档，居中排布） */
+const FX_TAB_W = 140;
+const FX_TAB_H = 32;
+const FX_TAB_GAP = 10;
+/** 特效 tab 名称（索引即 tab 号：0=击杀特效，1=其他特效） */
+const FX_TAB_LABELS = ['击杀特效', '其他特效'];
 /**
  * 完成度定格按钮：播放当前解体特效并把动画直接推进到指定完成度并冻结
  * （调试用：查看碎裂炸到 50%/80%/100% 时的形态，碎片停住不继续运动）。
@@ -287,6 +299,12 @@ export class Debug extends Component {
     private fxRunning = false;
     /** 全部特效按钮（解体 + 引擎特效演示，用于可用态统一刷新） */
     private fxButtons: Node[] = [];
+    /** 当前特效 tab（0=击杀特效：爆裂/碎裂/完成度；1=其他特效：其余解体/引擎演示） */
+    private fxTab = 0;
+    /** tab 切换按钮节点（切换时刷新选中态外观） */
+    private fxTabButtons: Node[] = [];
+    /** 各 tab 的按钮容器（切换时切 active；索引同 fxTab） */
+    private fxTabRoots: Node[] = [];
     /** 当前引擎特效演示类型（与解体特效互斥，共用 fxRunning） */
     private engineFx: EngineFxKind | null = null;
     /** 引擎特效节点列表（结束统一清理） */
@@ -351,45 +369,106 @@ export class Debug extends Component {
     }
 
     /**
-     * 创建特效按钮条（预览区下方）：爆裂 / 碎裂两个科技风按钮。
-     * 未选中模型或特效播放中时置灰（点击由 playFx 拦截）。
-     */
-    /**
-     * 创建特效按钮栏（预览区下方三排）：
-     * 第一排解体特效，第二排引擎特效演示，第三排碎裂完成度定格，均为等宽按钮。
+     * 创建特效按钮栏（预览区下方，tab 分组）：
+     * tab 0「击杀特效」：爆裂/碎裂三档 + 完成度定格（游戏击杀核心效果）；
+     * tab 1「其他特效」：汽化/黑洞/旋风/切割/熔陷 + 引擎特效演示。
+     * 每个 tab 内两排等宽按钮，切换 tab 只切容器 active（按钮常驻）。
      */
     private createEffectBar(): void {
-        const n = FX_BUTTONS.length;
-        const m = ENGINE_FX_BUTTONS.length;
-        const p = FX_PROGRESS_BUTTONS.length;
-        // 每排按自身按钮数居中布局，容器取三排较宽者
-        const w1 = n * FX_BTN_W + (n - 1) * FX_BTN_GAP;
-        const w2 = m * FX_BTN_W + (m - 1) * FX_BTN_GAP;
-        const w3 = p * FX_BTN_W + (p - 1) * FX_BTN_GAP;
-        const totalW = Math.max(w1, w2, w3);
+        const killW = FX_KILL_BUTTONS.length * FX_BTN_W + (FX_KILL_BUTTONS.length - 1) * FX_BTN_GAP;
+        const otherW = FX_OTHER_BUTTONS.length * FX_BTN_W + (FX_OTHER_BUTTONS.length - 1) * FX_BTN_GAP;
+        const progW = FX_PROGRESS_BUTTONS.length * FX_BTN_W + (FX_PROGRESS_BUTTONS.length - 1) * FX_BTN_GAP;
+        const engineW = ENGINE_FX_BUTTONS.length * FX_BTN_W + (ENGINE_FX_BUTTONS.length - 1) * FX_BTN_GAP;
+        const totalW = Math.max(killW, otherW, progW, engineW);
+        // 高度：tab 行 + 间距 + 两排按钮；位置上移保证底边不出画布（半高 360）
+        const barH = FX_TAB_H + 10 + FX_BTN_H * 2 + 10;
+        const row1Y = barH / 2 - FX_TAB_H - 10 - FX_BTN_H / 2;
+        const row2Y = row1Y - FX_BTN_H - 10;
+        const tabY = barH / 2 - FX_TAB_H / 2 - 2;
+
         const bar = new Node('EffectBar');
         bar.layer = UI_LAYER;
-        bar.addComponent(UITransform).setContentSize(totalW, FX_BTN_H * 3 + 20);
-        // 三排后容器变高，位置上移保证底边不出画布（半高 360）
+        bar.addComponent(UITransform).setContentSize(totalW, barH);
         bar.setPosition(0, -278, 0);
         this.node.addChild(bar);
 
-        // 第一排：解体特效
-        FX_BUTTONS.forEach((def, i) => {
-            const x = -w1 / 2 + FX_BTN_W / 2 + i * (FX_BTN_W + FX_BTN_GAP);
-            this.fxButtons.push(this.createFxButton(bar, def.name, def.label, x, FX_BTN_H / 2 + 5, () => this.playFx(def.mode)));
+        // tab 切换行（居中）
+        const tabRowW = FX_TAB_LABELS.length * FX_TAB_W + (FX_TAB_LABELS.length - 1) * FX_TAB_GAP;
+        FX_TAB_LABELS.forEach((label, i) => {
+            const x = -tabRowW / 2 + FX_TAB_W / 2 + i * (FX_TAB_W + FX_TAB_GAP);
+            this.fxTabButtons.push(this.createFxTabButton(bar, 'Tab_' + label, label, x, tabY, i));
         });
-        // 第二排：引擎特效演示（各按自身宽度居中均布）
-        ENGINE_FX_BUTTONS.forEach((def, i) => {
-            const x = -w2 / 2 + FX_BTN_W / 2 + i * (FX_BTN_W + FX_BTN_GAP);
-            this.fxButtons.push(this.createFxButton(bar, def.name, def.label, x, -FX_BTN_H / 2 - 5, () => this.playEngineFx(def.kind)));
+
+        // tab 0：击杀特效（爆裂/碎裂三档 + 完成度定格）
+        const killRoot = new Node('TabKill');
+        killRoot.layer = UI_LAYER;
+        bar.addChild(killRoot);
+        this.fxTabRoots.push(killRoot);
+        FX_KILL_BUTTONS.forEach((def, i) => {
+            const x = -killW / 2 + FX_BTN_W / 2 + i * (FX_BTN_W + FX_BTN_GAP);
+            this.fxButtons.push(this.createFxButton(killRoot, def.name, def.label, x, row1Y, () => this.playFx(def.mode)));
         });
-        // 第三排：碎裂完成度定格（播放当前解体特效并冻结在指定完成度）
         FX_PROGRESS_BUTTONS.forEach((def, i) => {
-            const x = -w3 / 2 + FX_BTN_W / 2 + i * (FX_BTN_W + FX_BTN_GAP);
-            this.fxButtons.push(this.createFxButton(bar, def.name, def.label, x, -FX_BTN_H * 1.5 - 15, () => this.freezeProgress(def.k)));
+            const x = -progW / 2 + FX_BTN_W / 2 + i * (FX_BTN_W + FX_BTN_GAP);
+            this.fxButtons.push(this.createFxButton(killRoot, def.name, def.label, x, row2Y, () => this.freezeProgress(def.k)));
         });
+
+        // tab 1：其他特效（其余解体 + 引擎特效演示）
+        const otherRoot = new Node('TabOther');
+        otherRoot.layer = UI_LAYER;
+        bar.addChild(otherRoot);
+        this.fxTabRoots.push(otherRoot);
+        FX_OTHER_BUTTONS.forEach((def, i) => {
+            const x = -otherW / 2 + FX_BTN_W / 2 + i * (FX_BTN_W + FX_BTN_GAP);
+            this.fxButtons.push(this.createFxButton(otherRoot, def.name, def.label, x, row1Y, () => this.playFx(def.mode)));
+        });
+        ENGINE_FX_BUTTONS.forEach((def, i) => {
+            const x = -engineW / 2 + FX_BTN_W / 2 + i * (FX_BTN_W + FX_BTN_GAP);
+            this.fxButtons.push(this.createFxButton(otherRoot, def.name, def.label, x, row2Y, () => this.playEngineFx(def.kind)));
+        });
+
+        // 默认展示击杀特效（游戏内击杀核心效果），并初始化按钮可用态
+        this.switchFxTab(0);
         this.refreshFxButtons();
+    }
+
+    /** 创建单个 tab 切换按钮（科技风背景 + 文字，选中态由 switchFxTab 重绘） */
+    private createFxTabButton(parent: Node, name: string, label: string, x: number, y: number, index: number): Node {
+        const btn = new Node(name);
+        btn.layer = UI_LAYER;
+        btn.setPosition(x, y, 0);
+        btn.addComponent(UITransform).setContentSize(FX_TAB_W, FX_TAB_H);
+        paintTechButton(btn.addComponent(Graphics), FX_TAB_W, FX_TAB_H, 'ghost');
+
+        const labNode = new Node('Label');
+        labNode.layer = UI_LAYER;
+        labNode.addComponent(UITransform).setContentSize(FX_TAB_W, FX_TAB_H);
+        const l = labNode.addComponent(Label);
+        l.string = label;
+        l.fontSize = 22;
+        l.color = techTextColor('ghost');
+        l.horizontalAlign = Label.HorizontalAlign.CENTER;
+        l.verticalAlign = Label.VerticalAlign.CENTER;
+        btn.addChild(labNode);
+
+        btn.on(Node.EventType.TOUCH_END, () => this.switchFxTab(index), this);
+        parent.addChild(btn);
+        return btn;
+    }
+
+    /** 切换特效 tab：显示对应容器、刷新 tab 按钮选中态（选中=primary 高亮，未选中=ghost 置暗） */
+    private switchFxTab(index: number): void {
+        this.fxTab = index;
+        this.fxTabRoots.forEach((root, i) => {
+            if (root) root.active = i === index;
+        });
+        this.fxTabButtons.forEach((btn, i) => {
+            const kind: TechButtonKind = i === index ? 'primary' : 'ghost';
+            const g = btn.getComponent(Graphics);
+            if (g) paintTechButton(g, FX_TAB_W, FX_TAB_H, kind);
+            const l = btn.getChildByName('Label')?.getComponent(Label);
+            if (l) l.color = techTextColor(kind);
+        });
     }
 
     /** 创建单个特效按钮（科技风背景 + 文字，返回按钮节点） */
