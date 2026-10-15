@@ -72,7 +72,7 @@ interface ShardTemplate {
     srcNode: Node;
 }
 
-/** 碎片重力加速度（世界单位/秒²）：仅碎裂三档与切割模式使用；爆裂为太空无重力匀速四散，熔陷用 FX_SINK_GRAVITY */
+/** 碎片重力加速度（世界单位/秒²）：仅切割模式使用；爆裂/碎裂三档为太空无重力匀速四散，熔陷用 FX_SINK_GRAVITY */
 const FX_GRAVITY = 420;
 /** 爆裂模式：碎片初速度上限、生命周期（秒） */
 const FX_BURST_SPEED = 420;
@@ -130,9 +130,9 @@ const FX_LABELS: Record<FxMode, string> = {
 };
 const FX_VERBS: Record<FxMode, string> = {
     burst: '飞溅而出',
-    shatter10: '塌落解体',
-    shatter60: '塌落解体',
-    shatter120: '塌落解体',
+    shatter10: '四散解体',
+    shatter60: '四散解体',
+    shatter120: '四散解体',
     vaporize: '蒸发消失',
     blackhole: '被吸入湮灭',
     whirlwind: '螺旋卷走',
@@ -1461,11 +1461,13 @@ export class Debug extends Component {
                 case 'shatter10':
                 case 'shatter60':
                 case 'shatter120':
-                    // 碎裂（10/60/120 三档）：低速塌落 + 打滚，运动参数一致，仅碎片数不同
+                    // 碎裂（10/60/120 三档）：低速四散 + 打滚，运动参数一致，仅碎片数不同。
+                    // 原 y 分量有 0.5 压扁 + 40 上扬偏置，是配合重力塌落设计的；太空无重力
+                    // 下去掉，碎片从模型中心各方向匀速漂移散开
                     maxLife = FX_SHATTER_LIFE;
                     {
                         const speed = FX_SHATTER_SPEED * (0.4 + Math.random() * 0.8);
-                        vel.set(dir.x * speed + (Math.random() - 0.5) * 60, dir.y * speed * 0.5 + 40, dir.z * speed + (Math.random() - 0.5) * 60);
+                        vel.set(dir.x * speed + (Math.random() - 0.5) * 60, dir.y * speed, dir.z * speed + (Math.random() - 0.5) * 60);
                         ang.set((Math.random() - 0.5) * 260, (Math.random() - 0.5) * 260, (Math.random() - 0.5) * 260);
                     }
                     break;
@@ -1565,15 +1567,15 @@ export class Debug extends Component {
             const e = sh.node.eulerAngles;
             switch (this.fxMode) {
                 case 'burst':
-                    // 爆裂（太空场景）：无重力，碎片沿初速度方向匀速四散飞出 + 自旋
-                    sh.node.setPosition(p.x + sh.vel.x * dt, p.y + sh.vel.y * dt, p.z + sh.vel.z * dt);
-                    sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
-                    break;
                 case 'shatter10':
                 case 'shatter60':
                 case 'shatter120':
+                    // 太空场景：无重力，碎片沿初速度匀速四散漂移 + 自旋（碎裂为低速打滚）
+                    sh.node.setPosition(p.x + sh.vel.x * dt, p.y + sh.vel.y * dt, p.z + sh.vel.z * dt);
+                    sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
+                    break;
                 case 'slice':
-                    // 重力抛物线 + 位移（shardRoot 无附加变换，本地速度即世界速度）
+                    // 切割：重力抛物线 + 位移（shardRoot 无附加变换，本地速度即世界速度）
                     sh.vel.y -= FX_GRAVITY * dt;
                     sh.node.setPosition(p.x + sh.vel.x * dt, p.y + sh.vel.y * dt, p.z + sh.vel.z * dt);
                     sh.node.setRotationFromEuler(e.x + sh.ang.x * dt, e.y + sh.ang.y * dt, e.z + sh.ang.z * dt);
