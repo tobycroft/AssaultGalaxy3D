@@ -1,5 +1,6 @@
 import {
     _decorator,
+    BlockInputEvents,
     Component,
     Node,
     director,
@@ -46,8 +47,10 @@ const MODEL_LAYER = 1;
 // 预览时模型统一缩放到的大致尺寸（世界单位）
 const TARGET_MODEL_SIZE = 380;
 
-// 加载界面进度环半径
-const LOADING_RING_R = 40;
+// 加载界面双进度条：槽宽 / 槽高 / 旋转装饰弧半径
+const LOADING_BAR_W = 560;
+const LOADING_BAR_H = 16;
+const LOADING_SPIN_R = 52;
 
 // ===== 解体特效参数 =====
 /** 解体模式：爆裂/碎裂(10/60/120 三档)/汽化/黑洞/旋风/切割/熔陷 */
@@ -196,6 +199,13 @@ const CATEGORY_NAMES: Record<string, string> = {
     asteroid: '小行星',
 };
 
+/**
+ * Debug 调试场景控制器：模型预览 + 解体特效 + 引擎特效演示。
+ * 进入流程：双进度条读条（模型加载 / 效果预缓存）→ 默认加载第一个模型并
+ * 预缓存其全部档位的碎片模板 → 用户点击左侧按钮切换模型、点击底部按钮播放特效。
+ * 解体特效把模型网格按三角形分组切成独立碎片运动（详见 extractShards / spawnShards），
+ * 碎片模板按 模型+档位 缓存，首次播放零卡顿。
+ */
 @ccclass('Debug')
 export class Debug extends Component {
     private modelRoot: Node | null = null;
@@ -205,10 +215,16 @@ export class Debug extends Component {
     private spin = true;
     /** 加载界面根节点（模型加载期间展示，完成后销毁） */
     private loadingNode: Node | null = null;
-    /** 加载界面进度环（Graphics） */
-    private loadingRing: Graphics | null = null;
-    /** 加载界面进度文字 */
+    /** 加载界面标题文字 */
     private loadingLabel: Label | null = null;
+    /** 模型加载进度条填充（Graphics，重绘宽度表示进度） */
+    private loadingModelBar: Graphics | null = null;
+    /** 模型加载百分比文字 */
+    private loadingModelPct: Label | null = null;
+    /** 效果预缓存进度条填充（Graphics） */
+    private loadingFxBar: Graphics | null = null;
+    /** 效果预缓存百分比文字 */
+    private loadingFxPct: Label | null = null;
     /** 加载界面外圈旋转装饰节点（隐藏后置空，update 据此停止旋转） */
     private spinNode: Node | null = null;
     /** 装饰弧当前旋转角（度），由 update 逐帧累加 */
@@ -365,8 +381,9 @@ export class Debug extends Component {
     }
 
     /**
-     * 创建加载界面：全屏半透明遮罩 + 进度环（底环/进度弧/外圈旋转装饰）+ 进度文字。
-     * 模型异步加载期间展示，加载完成后由 hideLoading() 淡出销毁。
+     * 创建加载界面：全屏半透明遮罩 + 旋转装饰 + 标题 + 双进度条
+     * （模型加载 / 效果预缓存）。模型异步加载与碎片模板预缓存期间展示，
+     * 全部完成后由 hideLoading() 淡出销毁。
      */
     private createLoading(): void {
         const canvas = this.node;
@@ -375,6 +392,8 @@ export class Debug extends Component {
         const root = new Node('Loading');
         root.layer = layer;
         root.addComponent(UITransform).setContentSize(1280, 720);
+        // 拦截加载/预缓存期间的所有触摸，避免误触特效按钮与预缓存流程抢跑
+        root.addComponent(BlockInputEvents);
         canvas.addChild(root);
         this.loadingNode = root;
 
@@ -387,76 +406,135 @@ export class Debug extends Component {
         mg.fillRect(-640, -360, 1280, 720);
         root.addChild(mask);
 
-        // 进度环
-        const ring = new Node('Ring');
-        ring.layer = layer;
-        ring.setPosition(0, 50, 0);
-        ring.addComponent(UITransform).setContentSize(120, 120);
-        this.loadingRing = ring.addComponent(Graphics);
-        this.drawLoadingRing(0);
-        root.addChild(ring);
+        // 标题
+        const titleNode = new Node('Title');
+        titleNode.layer = layer;
+        titleNode.setPosition(0, 108, 0);
+        titleNode.addComponent(UITransform).setContentSize(600, 44);
+        const tl = titleNode.addComponent(Label);
+        tl.fontSize = 30;
+        tl.color = TechText.primary;
+        tl.horizontalAlign = Label.HorizontalAlign.CENTER;
+        tl.verticalAlign = Label.VerticalAlign.CENTER;
+        tl.string = '正在加载…';
+        root.addChild(titleNode);
+        this.loadingLabel = tl;
 
-        // 外圈旋转装饰弧（两段错位弧线，持续旋转表示“进行中”）
+        // 旋转装饰弧（两段错位弧线，持续旋转表示“进行中”）
         const spin = new Node('Spin');
         spin.layer = layer;
+        spin.setPosition(0, 190, 0);
         spin.addComponent(UITransform).setContentSize(120, 120);
         const sg = spin.addComponent(Graphics);
-        const R = LOADING_RING_R;
         sg.strokeColor = new Color(0, 214, 255, 120);
         sg.lineWidth = 3;
-        sg.arc(0, 0, R + 12, 0, Math.PI * 0.55);
+        sg.arc(0, 0, LOADING_SPIN_R, 0, Math.PI * 0.55);
         sg.stroke();
         sg.strokeColor = new Color(120, 200, 255, 80);
-        sg.arc(0, 0, R + 12, Math.PI, Math.PI * 1.55);
+        sg.arc(0, 0, LOADING_SPIN_R, Math.PI, Math.PI * 1.55);
         sg.stroke();
-        ring.addChild(spin);
+        root.addChild(spin);
         // 旋转由 update(dt) 手动驱动（字段引用），不用 tween：
         // 避免节点销毁后 tween 仍在回调中访问已毁节点导致崩溃
         this.spinNode = spin;
 
-        // 进度文字
-        const labNode = new Node('Progress');
-        labNode.layer = layer;
-        labNode.setPosition(0, -45, 0);
-        labNode.addComponent(UITransform).setContentSize(600, 40);
-        const l = labNode.addComponent(Label);
-        l.fontSize = 26;
-        l.color = new Color(200, 232, 255, 255);
-        l.horizontalAlign = Label.HorizontalAlign.CENTER;
-        l.verticalAlign = Label.VerticalAlign.CENTER;
-        l.string = '正在加载模型…';
-        root.addChild(labNode);
-        this.loadingLabel = l;
+        // 双进度条：模型加载 + 效果预缓存
+        const barModel = this.createLoadingBar(root, 'BarModel', '模型加载', 20);
+        this.loadingModelBar = barModel.fill;
+        this.loadingModelPct = barModel.pct;
+        const barFx = this.createLoadingBar(root, 'BarFx', '效果预缓存', -62);
+        this.loadingFxBar = barFx.fill;
+        this.loadingFxPct = barFx.pct;
     }
 
-    /** 更新加载进度：重绘进度弧并刷新文字（loaded/total） */
+    /**
+     * 创建一条加载进度条：标签（左上，锚点 x=0）+ 百分比（右上，锚点 x=1）
+     * + 深色底槽 + 青色填充。返回填充 Graphics 与百分比 Label，供进度更新时重绘。
+     */
+    private createLoadingBar(parent: Node, name: string, label: string, y: number): { fill: Graphics; pct: Label } {
+        const layer = parent.layer;
+        const halfW = LOADING_BAR_W / 2;
+
+        // 标签（左对齐：锚点 x=0，传入的 x 即文字左缘）
+        const labNode = new Node(name + 'Lab');
+        labNode.layer = layer;
+        const labUt = labNode.addComponent(UITransform);
+        labUt.setContentSize(240, 30);
+        labUt.setAnchorPoint(0, 0.5);
+        labNode.setPosition(-halfW, y + 28, 0);
+        const lab = labNode.addComponent(Label);
+        lab.string = label;
+        lab.fontSize = 20;
+        lab.color = TechText.dim;
+        lab.horizontalAlign = Label.HorizontalAlign.LEFT;
+        lab.verticalAlign = Label.VerticalAlign.CENTER;
+        parent.addChild(labNode);
+
+        // 百分比（右对齐：锚点 x=1，传入的 x 即文字右缘）
+        const pctNode = new Node(name + 'Pct');
+        pctNode.layer = layer;
+        const pctUt = pctNode.addComponent(UITransform);
+        pctUt.setContentSize(120, 30);
+        pctUt.setAnchorPoint(1, 0.5);
+        pctNode.setPosition(halfW, y + 28, 0);
+        const pct = pctNode.addComponent(Label);
+        pct.string = '0%';
+        pct.fontSize = 20;
+        pct.color = TechText.caption;
+        pct.horizontalAlign = Label.HorizontalAlign.RIGHT;
+        pct.verticalAlign = Label.VerticalAlign.CENTER;
+        parent.addChild(pctNode);
+
+        // 底槽：深色圆角条 + 细描边
+        const bg = new Node(name + 'Bg');
+        bg.layer = layer;
+        bg.setPosition(0, y, 0);
+        bg.addComponent(UITransform).setContentSize(LOADING_BAR_W, LOADING_BAR_H);
+        const bgG = bg.addComponent(Graphics);
+        bgG.fillColor = new Color(11, 24, 43, 245);
+        bgG.roundRect(-halfW, -LOADING_BAR_H / 2, LOADING_BAR_W, LOADING_BAR_H, LOADING_BAR_H / 2);
+        bgG.fill();
+        bgG.strokeColor = new Color(0, 190, 230, 120);
+        bgG.lineWidth = 1;
+        bgG.stroke();
+        parent.addChild(bg);
+
+        // 填充：单独节点，宽度随进度重绘（初始 0）
+        const fill = new Node(name + 'Fill');
+        fill.layer = layer;
+        fill.setPosition(0, y, 0);
+        fill.addComponent(UITransform).setContentSize(LOADING_BAR_W, LOADING_BAR_H);
+        const fillG = fill.addComponent(Graphics);
+        this.drawLoadingBar(fillG, 0);
+        parent.addChild(fill);
+
+        return { fill: fillG, pct };
+    }
+
+    /** 更新模型加载进度（进度条一）：重绘填充与百分比（loaded/total） */
     private updateLoading(loaded: number, total: number): void {
         const p = total > 0 ? loaded / total : 0;
-        this.drawLoadingRing(p);
-        if (this.loadingLabel) {
-            this.loadingLabel.string = `正在加载模型 ${loaded} / ${total}`;
-        }
+        if (this.loadingModelBar) this.drawLoadingBar(this.loadingModelBar, p);
+        if (this.loadingModelPct) this.loadingModelPct.string = `${Math.round(p * 100)}%`;
     }
 
-    /** 绘制进度环：灰色底环 + 青色进度弧（12 点方向起笔，顺时针） */
-    private drawLoadingRing(progress: number): void {
-        const g = this.loadingRing;
-        if (!g) return;
-        const R = LOADING_RING_R;
+    /** 更新效果预缓存进度（进度条二）：重绘填充与百分比（done/total 档位数） */
+    private updateLoadingFx(done: number, total: number): void {
+        const p = total > 0 ? done / total : 0;
+        if (this.loadingFxBar) this.drawLoadingBar(this.loadingFxBar, p);
+        if (this.loadingFxPct) this.loadingFxPct.string = `${Math.round(p * 100)}%`;
+    }
+
+    /** 绘制进度条填充：青色圆角条，宽度 = 槽宽 × p（左侧对齐生长） */
+    private drawLoadingBar(g: Graphics, p: number): void {
+        const w = LOADING_BAR_W;
+        const h = LOADING_BAR_H;
         g.clear();
-        // 底环
-        g.strokeColor = new Color(50, 80, 110, 255);
-        g.lineWidth = 6;
-        g.arc(0, 0, R, 0, Math.PI * 2, true);
-        g.stroke();
-        // 进度弧
-        const p = Math.max(0, Math.min(1, progress));
-        if (p > 0.0001) {
-            g.strokeColor = new Color(0, 214, 255, 255);
-            g.lineWidth = 6;
-            g.arc(0, 0, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * p);
-            g.stroke();
-        }
+        const pw = Math.max(0, Math.min(1, p)) * (w - 6);
+        if (pw <= 0.5) return;
+        g.fillColor = new Color(0, 214, 255, 255);
+        g.roundRect(-w / 2 + 3, -(h - 6) / 2, pw, h - 6, (h - 6) / 2);
+        g.fill();
     }
 
     /** 隐藏加载界面：淡出后销毁，then 回调在销毁后执行（需自行校验组件有效性） */
@@ -467,8 +545,11 @@ export class Debug extends Component {
             return;
         }
         this.loadingNode = null;
-        this.loadingRing = null;
         this.loadingLabel = null;
+        this.loadingModelBar = null;
+        this.loadingModelPct = null;
+        this.loadingFxBar = null;
+        this.loadingFxPct = null;
         fadeOutThen(root, 0.25, () => {
             root.destroy();
             // 节点销毁后必须断引用，否则 update 继续访问已毁节点会崩溃
@@ -539,11 +620,35 @@ export class Debug extends Component {
                     this.setStatus('模型加载失败');
                     return;
                 }
-                // 加载完成：先淡出加载界面，再展示模型列表
-                this.hideLoading(() => {
+                if (!this.modelRoot) {
+                    this.hideLoading();
+                    this.setStatus('模型根节点缺失，无法预览');
+                    return;
+                }
+                // 加载完成：默认加载第一个模型（先隐藏），读条期间预缓存其碎片模板
+                // （第二根进度条），预缓存完成再收起加载界面并亮出模型，
+                // 保证首次播放任意解体特效都直接命中缓存、零卡顿
+                // 默认模型取路径序第一个（loaded 按完成顺序入队，需排序保证确定性）
+                const first = [...loaded].sort((a, b) => a.path.localeCompare(b.path))[0];
+                const model = instantiate(first.prefab);
+                this.resetFx();
+                this.shardCache.clear();
+                this.clearModel();
+                this.modelRoot.addChild(model);
+                this.currentModel = model;
+                // 预缓存期间保持隐藏：碎片模板只记录来源节点，矩阵在播放时按当前朝向实时换算
+                model.active = false;
+                this.spin = false;
+                this.refreshFxButtons();
+                this.precacheShardTemplates(model, () => {
                     if (!this.isValid) return;
-                    this.showModelButtons(loaded);
-                    this.setStatus('共找到 ' + loaded.length + ' 个模型，点击左侧按钮预览');
+                    // 收起加载界面后亮出模型，再展示模型列表
+                    this.hideLoading(() => {
+                        if (!this.isValid) return;
+                        this.revealModel(model);
+                        this.showModelButtons(loaded);
+                        this.setStatus('共找到 ' + loaded.length + ' 个模型，已默认加载第一个，点击左侧按钮切换');
+                    });
                 });
             });
         });
@@ -683,14 +788,58 @@ export class Debug extends Component {
         this.modelRoot!.addChild(model);
         this.currentModel = model;
         this.spin = false;
+        this.revealModel(model);
+        this.setStatus('已加载模型: ' + (prefab.name || 'unknown'));
+        this.refreshFxButtons();
+    }
+
+    /** 亮出模型：激活后延迟一帧执行 fitModel（包围盒换算需要激活后的世界矩阵），并恢复自旋 */
+    private revealModel(model: Node): void {
+        model.active = true;
         this.scheduleOnce(() => {
             // 延迟一帧执行，期间场景可能已切换，先校验组件与模型根节点
             if (!this.isValid || !this.modelRoot) return;
             this.fitModel(model);
             this.spin = true;
         }, 0);
-        this.setStatus('已加载模型: ' + (prefab.name || 'unknown'));
-        this.refreshFxButtons();
+    }
+
+    /**
+     * 预缓存碎片模板：对指定模型按全部档位（碎裂 10/60/120，非碎裂模式共用
+     * FX_MAX_SHARDS=120）预先切好网格并写入 shardCache。切网格与解体模式无关，
+     * 全部档位缓存后，首次播放任意解体特效都直接命中缓存，消除首次卡顿。
+     * 每缓存一档让出一帧重绘进度条；模型保持隐藏（模板只记录来源节点，
+     * 矩阵在播放时按当前世界矩阵实时换算，不受隐藏/自旋影响）。
+     */
+    private precacheShardTemplates(model: Node, onDone: () => void): void {
+        // 全部档位去重：碎裂三档 + 非碎裂模式档位（FX_MAX_SHARDS 与 shatter120 同档）
+        const caps = [FX_SHATTER_CAPS.shatter10, FX_SHATTER_CAPS.shatter60, FX_SHATTER_CAPS.shatter120, FX_MAX_SHARDS]
+            .filter((c, i, arr) => arr.indexOf(c) === i);
+        this.updateLoadingFx(0, caps.length);
+        let i = 0;
+        const step = (): void => {
+            // 处理期间场景可能已切换（组件已销毁），直接放弃后续
+            if (!this.isValid) return;
+            if (i >= caps.length) {
+                onDone();
+                return;
+            }
+            const cap = caps[i];
+            const key = `${model.uuid}|${cap}`;
+            if (!this.shardCache.has(key)) {
+                const templates: ShardTemplate[] = [];
+                // getComponentsInChildren 会一并遍历非激活节点，隐藏状态不影响提取
+                const renderers = model.getComponentsInChildren(MeshRenderer);
+                for (const r of renderers) this.extractShards(r, templates, cap);
+                if (templates.length > 0) this.shardCache.set(key, templates);
+            }
+            i++;
+            this.updateLoadingFx(i, caps.length);
+            // 让出一帧：先重绘进度条再切下一档，避免整段阻塞导致进度条不动
+            this.scheduleOnce(step, 0);
+        };
+        // 首帧先画出 0%，再开始切第一档
+        this.scheduleOnce(step, 0);
     }
 
     private clearModel(): void {
