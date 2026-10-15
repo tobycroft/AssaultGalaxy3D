@@ -139,13 +139,16 @@ const FX_TAB_GAP = 10;
 /** 特效 tab 名称（索引即 tab 号：0=击杀特效，1=其他特效） */
 const FX_TAB_LABELS = ['击杀特效', '其他特效'];
 /**
- * 完成度定格按钮：播放当前解体特效并把动画直接推进到指定完成度并冻结
- * （调试用：查看碎裂炸到 50%/80%/100% 时的形态，碎片停住不继续运动）。
+ * 完成度定格按钮：播放当前解体特效（碎裂/爆裂均可）并把动画直接推进到
+ * 指定完成度并冻结（调试用：查看碎裂炸到各进度时的形态，碎片停住不继续运动）。
  */
 const FX_PROGRESS_BUTTONS: { name: string; label: string; k: number }[] = [
+    { name: 'BtnProg10', label: '碎裂10%', k: 0.1 },
+    { name: 'BtnProg20', label: '碎裂20%', k: 0.2 },
+    { name: 'BtnProg30', label: '碎裂30%', k: 0.3 },
     { name: 'BtnProg50', label: '碎裂50%', k: 0.5 },
-    { name: 'BtnProg80', label: '碎裂80%', k: 0.8 },
-    { name: 'BtnProg100', label: '碎裂100%', k: 1 },
+    { name: 'BtnProg70', label: '碎裂70%', k: 0.7 },
+    { name: 'BtnProg90', label: '碎裂90%', k: 0.9 },
 ];
 /** 各模式状态栏文案：名称 + 解体动作描述 */
 const FX_LABELS: Record<FxMode, string> = {
