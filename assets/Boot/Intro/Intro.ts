@@ -2,6 +2,7 @@ import { _decorator, Component, director, Node, Vec3, Color, Label, UITransform,
 import { fadeIn, fadeOutThen } from '../../Common/UIAnim';
 import { TechText } from '../../Common/TechUI';
 import { preheatModels } from '../ModelPreheater';
+import { cancelShardPreheat, startShardPreheat, tickShardPreheat } from '../ShardPreheater';
 import { markIntroPlayed } from '../BootFlow';
 
 const { ccclass } = _decorator;
@@ -17,9 +18,11 @@ const STAR_COUNT = 30;
 
 /**
  * 游戏开场 Intro：游戏启动时的第一个场景。
- * 第一阶段：进度条显式展示模型预热加载（百分比 + 青色填充条）；
- * 第二阶段：加载完成后打字机动画登场，最后出现点击继续，点击屏幕淡出进入首页
- * （未登录由 Home 自动跳转登录页）。加载完成前点击不生效。
+ * 第一阶段：进度条展示模型预热（Prefab 进缓存，ModelPreheater）；
+ * 第二阶段：进度条展示碎片效果预热（切网格写入 ShardStore，进 Debug 场景播放
+ * 解体特效零卡顿，ShardPreheater 逐帧切档）；
+ * 两阶段共用一个进度条（模型占前 50%、碎片占后 50%），完成后打字机动画登场，
+ * 最后点击继续淡出进入首页（未登录由 Home 自动跳转登录页）。加载完成前点击不生效。
  */
 @ccclass('Intro')
 export class Intro extends Component {
@@ -44,6 +47,8 @@ export class Intro extends Component {
 
     /** 进度条节点引用 */
     private loadingRoot: Node | null = null;
+    /** 进度条上方说明文字（随预热阶段切换文案） */
+    private captionLabel: Label | null = null;
     /** 进度条填充 Graphics（按进度重绘） */
     private barFill: Graphics | null = null;
     /** 进度百分比文字 */
@@ -58,14 +63,27 @@ export class Intro extends Component {
         this.buildBackground();
         this.buildLoading();
 
-        // 先预热模型（进度条驱动），完成后才启动开场动画
+        // 阶段一：模型预热（Prefab 进资源缓存），完成后进入阶段二
         preheatModels(
-            (loaded, total) => this.onPreheatProgress(loaded, total),
-            () => this.onPreheatDone(),
+            (loaded, total) => this.onModelProgress(loaded, total),
+            () => {
+                if (!this.isValid) return;
+                // 阶段二：碎片效果预热（切网格写入 ShardStore），逐帧切档由 update 驱动
+                this.setCaption('特效矩阵生成中…');
+                startShardPreheat(
+                    (done, total) => this.onShardProgress(done, total),
+                    () => {
+                        if (!this.isValid) return;
+                        this.onPreheatDone();
+                    },
+                );
+            },
         );
     }
 
     update(dt: number): void {
+        // 碎片预热逐帧推进一档（无任务时为空操作；preheatDone 后任务已清）
+        tickShardPreheat();
         if (!this.preheatDone) return;
         this.elapsed += dt;
 
@@ -96,7 +114,7 @@ export class Intro extends Component {
         }
     }
 
-    // ==================== 第一阶段：加载进度 ====================
+    // ==================== 两段预热：加载进度 ====================
 
     /** 构建进度条 UI：说明文字 + 轨道 + 填充 + 百分比 */
     private buildLoading(): void {
@@ -119,6 +137,7 @@ export class Intro extends Component {
         cl.horizontalAlign = Label.HorizontalAlign.CENTER;
         cl.verticalAlign = Label.VerticalAlign.CENTER;
         root.addChild(cap);
+        this.captionLabel = cl;
 
         // 进度轨道（深色圆角槽 + 青色描边）
         const track = new Node('Track');
@@ -162,9 +181,18 @@ export class Intro extends Component {
         this.barLabel = pl;
     }
 
-    /** 预热进度回调：重绘填充条与百分比文字 */
-    private onPreheatProgress(loaded: number, total: number): void {
-        const p = total > 0 ? loaded / total : 1;
+    /** 阶段一进度（模型预热）：占总进度前 50% */
+    private onModelProgress(loaded: number, total: number): void {
+        this.drawProgress(total > 0 ? 0.5 * loaded / total : 0.5);
+    }
+
+    /** 阶段二进度（碎片效果预热）：占总进度后 50% */
+    private onShardProgress(done: number, total: number): void {
+        this.drawProgress(0.5 + (total > 0 ? 0.5 * done / total : 0.5));
+    }
+
+    /** 按总进度 0~1 重绘填充条与百分比文字（两段预热共用一根进度条） */
+    private drawProgress(p: number): void {
         if (Math.abs(p - this.drawnProgress) < 0.005) return;
         this.drawnProgress = p;
         const w = Math.round(516 * p);
@@ -179,11 +207,16 @@ export class Intro extends Component {
         if (this.barLabel) this.barLabel.string = `${Math.round(p * 100)}%`;
     }
 
+    /** 切换进度条上方说明文字（阶段一切换到阶段二时提示用户） */
+    private setCaption(text: string): void {
+        if (this.captionLabel) this.captionLabel.string = text;
+    }
+
     /** 预热完成：撤掉进度条，启动开场动画并开放点击继续 */
     private onPreheatDone(): void {
         if (this.preheatDone) return;
         this.preheatDone = true;
-        this.onPreheatProgress(1, 1);
+        this.drawProgress(1);
 
         // 进度条淡出后移除，再启动打字机动画
         const root = this.loadingRoot;
@@ -286,5 +319,14 @@ export class Intro extends Component {
         if (this.leaving) return;
         this.leaving = true;
         fadeOutThen(this.node, 0.4, () => director.loadScene('Home'));
+    }
+
+    /**
+     * 场景销毁：放弃进行中的碎片预热任务（此时若 Prefab 异步加载刚回、模型刚
+     * 实例化，任务内会一并销毁；否则放任不管会留下游离节点与显存）。
+     * 正常流程预热早已完成（job 已清），此处仅兜底中途退出。
+     */
+    protected onDestroy(): void {
+        cancelShardPreheat();
     }
 }
