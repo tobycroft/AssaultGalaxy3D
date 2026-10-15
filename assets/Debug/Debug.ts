@@ -225,6 +225,12 @@ export class Debug extends Component {
     private loadingFxBar: Graphics | null = null;
     /** 效果预缓存百分比文字 */
     private loadingFxPct: Label | null = null;
+    /**
+     * 读条期预缓存任务：待缓存档位队列，由 update 每帧处理一档（precacheTick）。
+     * 不用 scheduleOnce 让回调自调度：同一回调重复调度时引擎只告警、不新建定时器
+     * （scheduler.ts logID 1507），且一次性定时器在回调执行后即自取消，链会断。
+     */
+    private precacheJob: { model: Node; caps: number[]; total: number; onDone: () => void } | null = null;
     /** 加载界面外圈旋转装饰节点（隐藏后置空，update 据此停止旋转） */
     private spinNode: Node | null = null;
     /** 装饰弧当前旋转角（度），由 update 逐帧累加 */
@@ -275,6 +281,8 @@ export class Debug extends Component {
     }
 
     update(dt: number): void {
+        // 读条期预缓存：每帧切一档碎片模板并重绘进度条，切完自动收起加载界面
+        if (this.precacheJob) this.precacheTick();
         // 加载界面装饰弧持续旋转（加载完成/场景切换后 spinNode 置空即停）
         if (this.spinNode) {
             this.spinAngle = (this.spinAngle + dt * 260) % 360;
@@ -295,12 +303,9 @@ export class Debug extends Component {
         this.statusLabel = canvas.getChildByName('StatusLabel')?.getComponent(Label) ?? null;
         this.modelButtonContainer = canvas.getChildByName('ModelButtons') ?? null;
 
-        // 给返回按钮补一个可见的圆角背景（节点本身在场景中固定，可拖动）
-        const back = canvas.getChildByName('BackButton');
-        if (back) {
-            const g = back.getComponent(Graphics) ?? back.addComponent(Graphics);
-            this.drawButtonBg(g, 200, 56, new Color(45, 74, 122, 255));
-        }
+        // 返回按钮背景由场景中 BackButton 节点自带的 Sprite 提供（颜色 45,74,122），
+        // 不再运行时 addComponent(Graphics)：一个节点只能有一个渲染组件，
+        // 补画会触发 "Can't add renderable component" 告警且该 Graphics 不会渲染
 
         // 列表已按分类展示（各类自带标题），旧的固定标题改为通用文案
         const caption = canvas.getChildByName('ListCaption')?.getComponent(Label);
@@ -805,41 +810,41 @@ export class Debug extends Component {
     }
 
     /**
-     * 预缓存碎片模板：对指定模型按全部档位（碎裂 10/60/120，非碎裂模式共用
+     * 启动读条期碎片模板预缓存：对指定模型按全部档位（碎裂 10/60/120，非碎裂模式共用
      * FX_MAX_SHARDS=120）预先切好网格并写入 shardCache。切网格与解体模式无关，
      * 全部档位缓存后，首次播放任意解体特效都直接命中缓存，消除首次卡顿。
-     * 每缓存一档让出一帧重绘进度条；模型保持隐藏（模板只记录来源节点，
-     * 矩阵在播放时按当前世界矩阵实时换算，不受隐藏/自旋影响）。
+     * 由 update 每帧处理一档（见 precacheTick），切期间进度条可实时重绘；
+     * 模型保持隐藏（模板只记录来源节点，矩阵在播放时按当前世界矩阵实时换算）。
      */
     private precacheShardTemplates(model: Node, onDone: () => void): void {
         // 全部档位去重：碎裂三档 + 非碎裂模式档位（FX_MAX_SHARDS 与 shatter120 同档）
         const caps = [FX_SHATTER_CAPS.shatter10, FX_SHATTER_CAPS.shatter60, FX_SHATTER_CAPS.shatter120, FX_MAX_SHARDS]
             .filter((c, i, arr) => arr.indexOf(c) === i);
         this.updateLoadingFx(0, caps.length);
-        let i = 0;
-        const step = (): void => {
-            // 处理期间场景可能已切换（组件已销毁），直接放弃后续
-            if (!this.isValid) return;
-            if (i >= caps.length) {
-                onDone();
-                return;
-            }
-            const cap = caps[i];
-            const key = `${model.uuid}|${cap}`;
-            if (!this.shardCache.has(key)) {
-                const templates: ShardTemplate[] = [];
-                // getComponentsInChildren 会一并遍历非激活节点，隐藏状态不影响提取
-                const renderers = model.getComponentsInChildren(MeshRenderer);
-                for (const r of renderers) this.extractShards(r, templates, cap);
-                if (templates.length > 0) this.shardCache.set(key, templates);
-            }
-            i++;
-            this.updateLoadingFx(i, caps.length);
-            // 让出一帧：先重绘进度条再切下一档，避免整段阻塞导致进度条不动
-            this.scheduleOnce(step, 0);
-        };
-        // 首帧先画出 0%，再开始切第一档
-        this.scheduleOnce(step, 0);
+        // 注册任务，首帧先画出 0%，下一帧 update 开始切第一档
+        this.precacheJob = { model, caps, total: caps.length, onDone };
+    }
+
+    /** 预缓存推进一档：切当前档位的碎片模板并更新进度条，队列空了执行完成回调 */
+    private precacheTick(): void {
+        const job = this.precacheJob;
+        if (!job) return;
+        const cap = job.caps.shift();
+        if (cap === undefined) {
+            // 全部档位缓存完成：清理任务并回调（收起加载界面、亮出模型）
+            this.precacheJob = null;
+            job.onDone();
+            return;
+        }
+        const key = `${job.model.uuid}|${cap}`;
+        if (!this.shardCache.has(key)) {
+            const templates: ShardTemplate[] = [];
+            // getComponentsInChildren 会一并遍历非激活节点，隐藏状态不影响提取
+            const renderers = job.model.getComponentsInChildren(MeshRenderer);
+            for (const r of renderers) this.extractShards(r, templates, cap);
+            if (templates.length > 0) this.shardCache.set(key, templates);
+        }
+        this.updateLoadingFx(job.total - job.caps.length, job.total);
     }
 
     private clearModel(): void {
