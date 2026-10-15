@@ -8,11 +8,11 @@ import { paintTechButton, paintTechInput, paintTechPanel, TechText } from '../Co
 
 const { ccclass } = _decorator;
 
-/** 列表每页条数（小窗口内 6 条刚好免滚动） */
+/** 列表每页条数（窗口内 6 条刚好免滚动） */
 const PAGE_SIZE = 6;
 /** 弹窗面板尺寸 */
-const PANEL_W = 760;
-const PANEL_H = 560;
+const PANEL_W = 960;
+const PANEL_H = 640;
 
 /**
  * 新闻公告弹窗（纯代码自绘，无 Prefab）。
@@ -133,7 +133,8 @@ export class NewsDialog extends Component {
         }
         const rowH = 62;
         const gap = 8;
-        const top = (PANEL_H - 100) / 2 - 30;
+        // 首行顶边落在标题区分隔线（PANEL_H/2 - 72）下方 16px，避免与分隔线重叠
+        const top = PANEL_H / 2 - 72 - 16 - rowH / 2;
         list.forEach((item, i) => {
             this.createNewsRow(layer, item, top - i * (rowH + gap), rowH);
         });
@@ -181,8 +182,8 @@ export class NewsDialog extends Component {
         layer.removeAllChildren();
         layer.active = true;
 
-        // 顶部：返回 + 转圈提示
-        this.createRoundBtn(layer, 'BtnBack', '返回', -PANEL_W / 2 + 60, (PANEL_H - 100) / 2 - 30, 96, 42,
+        // 顶部：返回 + 转圈提示（与 renderDetail 头部行一致，位于分隔线下方）
+        this.createRoundBtn(layer, 'BtnBack', '返回', -PANEL_W / 2 + 60, PANEL_H / 2 - 72 - 16 - 21, 96, 42,
             () => this.loadList(this.page), 'ghost');
         this.showTip(layer, '加载中…');
 
@@ -210,22 +211,25 @@ export class NewsDialog extends Component {
     /** 渲染详情：返回 + 标题 + 日期 + 可滚动正文 */
     private renderDetail(layer: Node, title: string, publishTime: string, content: string): void {
         const layerH = PANEL_H - 100;
-        const top = layerH / 2;
+        // 头部行（返回 + 标题 + 日期）中心：标题区分隔线（PANEL_H/2 - 72）下方 16px，按钮高 42
+        const headY = PANEL_H / 2 - 72 - 16 - 21;
 
-        this.createRoundBtn(layer, 'BtnBack', '返回', -PANEL_W / 2 + 60, top - 30, 96, 42,
+        this.createRoundBtn(layer, 'BtnBack', '返回', -PANEL_W / 2 + 60, headY, 96, 42,
             () => this.loadList(this.page), 'ghost');
-        this.createLabel(layer, 'Title', this.clip(title, 24), -PANEL_W / 2 + 130, top - 26, 26, TechText.bright, Label.HorizontalAlign.LEFT, PANEL_W - 250);
-        this.createLabel(layer, 'Date', this.formatDate(publishTime), PANEL_W / 2 - 60, top - 28, 18, TechText.dim, Label.HorizontalAlign.RIGHT, 100);
+        this.createLabel(layer, 'Title', this.clip(title, 24), -PANEL_W / 2 + 130, headY, 26, TechText.bright, Label.HorizontalAlign.LEFT, PANEL_W - 250);
+        this.createLabel(layer, 'Date', this.formatDate(publishTime), PANEL_W / 2 - 60, headY, 18, TechText.dim, Label.HorizontalAlign.RIGHT, 100);
 
         // 正文视口：Mask 裁剪超出部分（不加 Graphics，避免与 Mask 内部图形冲突）
         const viewW = PANEL_W - 100;
-        const viewH = layerH - 120;
+        const viewTop = headY - 21 - 24;
+        const viewBottom = -layerH / 2 + 12;
+        const viewH = viewTop - viewBottom;
         const view = new Node('Viewport');
         view.layer = layer.layer;
         view.addComponent(UITransform).setContentSize(viewW, viewH);
         const maskComp = view.addComponent(Mask);
         maskComp.type = MaskType.GRAPHICS_RECT;
-        view.setPosition(0, -60, 0);
+        view.setPosition(0, (viewTop + viewBottom) / 2, 0);
         layer.addChild(view);
 
         // 正文：纯文本 Label（RESIZE_HEIGHT 自动换行撑高），由视口裁剪
@@ -311,7 +315,14 @@ export class NewsDialog extends Component {
         const n = new Node(name);
         n.layer = parent.layer;
         n.setPosition(x, y, 0);
-        n.addComponent(UITransform).setContentSize(width, fontSize + 14);
+        const ut = n.addComponent(UITransform);
+        ut.setContentSize(width, fontSize + 14);
+        // Label 文字在 UITransform 约束框内对齐：左对齐时 x 即文字左边缘、右对齐时 x 即右边缘，
+        // 故按对齐方式设置锚点 x（沿用默认 0.5 会把文字挤出面板窗口外）
+        ut.setAnchorPoint(
+            align === Label.HorizontalAlign.LEFT ? 0 : align === Label.HorizontalAlign.RIGHT ? 1 : 0.5,
+            0.5,
+        );
         const l = n.addComponent(Label);
         l.string = text;
         l.fontSize = fontSize;
