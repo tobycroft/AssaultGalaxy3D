@@ -33,12 +33,12 @@ import {
     Rect,
     Material,
     tween,
-    gfx,
 } from 'cc';
 import { fadeIn, fadeOutThen } from '../Common/UIAnim';
 import { paintTechButton, TechButtonKind, techTextColor, TechText } from '../Common/TechUI';
 import { allShardCaps, FX_MAX_SHARDS, FX_SHATTER_CAPS, ShardBlob, ShardEntry, ShardStore } from '../Common/ShardStore';
 import { extractShards, modelFingerprint, readSubMeshes, resolveNodePath, SrcSubMesh } from '../Common/ShardCutter';
+import { BrustExplosion } from '../Effect/Brust/BrustExplosion';
 
 const { ccclass } = _decorator;
 
@@ -90,12 +90,6 @@ const FX_BURST_SPEED = 420;
 const FX_BURST_LIFE = 1.0;
 /** 爆裂震屏时长（秒）：爆裂瞬间按时间衰减地随机抖动主相机 */
 const FX_BURST_SHAKE_TIME = 0.6;
-/** 爆裂火球（ParticleSystem2D 加法混合）：粒子数、单粒生命（短于 FX_BURST_LIFE，收尾前自然消亡） */
-const FX_FIREBALL_PARTICLES = 240;
-const FX_FIREBALL_LIFE = 0.55;
-const FX_FIREBALL_LIFE_VAR = 0.35;
-/** 爆裂火球发射窗口（秒）：短促集中爆发，随后粒子凭初速度飘散消亡 */
-const FX_FIREBALL_DURATION = 0.5;
 /** 碎裂模式：碎片初速度上限、生命周期（秒） */
 const FX_SHATTER_SPEED = 130;
 const FX_SHATTER_LIFE = 1.8;
@@ -1156,8 +1150,9 @@ export class Debug extends Component {
         // 爆裂/切割模式：中央能量闪光冲击波
         if (mode === 'burst' || mode === 'slice') this.createFlash();
         if (mode === 'burst') {
-            // 爆裂专属：巨大火球粒子 + 暖色冲击波环 + 短促震屏（引擎自带粒子系统）
-            this.createFireball();
+            // 爆裂专属：可复用圆形粒子火球（Effect/Brust）+ 暖色冲击波环 + 短促震屏
+            const brust = BrustExplosion.play(this.modelRoot);
+            this.fxNodes.push(brust.node);
             this.createBurstShockRings();
             this.fxShakeLife = 0;
             this.fxCameraShake();
@@ -1360,60 +1355,6 @@ export class Debug extends Component {
         g.lineWidth = Math.max(1, 10 * (1 - t));
         g.arc(0, 0, r, 0, Math.PI * 2);
         g.stroke();
-    }
-
-    /**
-     * 爆裂火球（引擎自带 ParticleSystem2D + 加法混合）：以模型中心为源短促发射一团
-     * 巨大暖色粒子——亮黄白热核心 + 橙红外焰，全向高速迸发并持续膨胀，
-     * 加法混合（dst=ONE）让粒子重叠处过曝，形成巨大火球观感。
-     * 无美术粒子贴图，沿用内置白色方点纹理 + 大 startSize 近似火球团。
-     * 单粒生命 0.55±0.35s（最长 0.9s）短于碎片生命，特效收尾时火球已自然消亡。
-     */
-    private createFireball(): void {
-        const root = this.modelRoot;
-        if (!root) return;
-        const n = new Node('FxFireball');
-        n.layer = UI_LAYER;
-        // 定位到 modelRoot 原点（fitModel 已将模型几何中心置于此处）
-        n.setPosition(0, 0, 0);
-        n.addComponent(UITransform).setContentSize(10, 10);
-        const ps = n.addComponent(ParticleSystem2D);
-        ps.custom = true;
-        ps.playOnLoad = false;
-        ps.totalParticles = FX_FIREBALL_PARTICLES;
-        ps.duration = FX_FIREBALL_DURATION;               // 短促集中爆发
-        ps.life = FX_FIREBALL_LIFE; ps.lifeVar = FX_FIREBALL_LIFE_VAR;
-        ps.startSize = 130; ps.startSizeVar = 85;         // 巨大粒子
-        ps.endSize = 260; ps.endSizeVar = 130;            // 火球持续膨胀
-        ps.speed = 480; ps.speedVar = 380;                // 从中心猛烈迸发
-        ps.angle = 90; ps.angleVar = 360;                 // 全向均匀四散
-        ps.gravity = new Vec2(0, 0);                      // 太空无重力，保持球状扩张
-        ps.emissionRate = FX_FIREBALL_PARTICLES / FX_FIREBALL_DURATION;
-        ps.positionType = 0;                              // FREE：粒子脱离发射器独立运动
-        ps.startColor = new Color(255, 232, 170);         // 亮黄
-        ps.startColorVar = new Color(45, 55, 30, 0);      // 向橙红扰动
-        ps.endColor = new Color(255, 70, 10, 0);          // 暗红并淡出
-        ps.endColorVar = new Color(0, 45, 60, 0);
-        // 加法混合：粒子重叠处过曝形成白热核心。
-        // UIRenderer 的混合因子访问器为 engineInternal（未进 d.ts），运行时有效
-        const blend = ps as unknown as { srcBlendFactor: number; dstBlendFactor: number };
-        blend.srcBlendFactor = gfx.BlendFactor.SRC_ALPHA;
-        blend.dstBlendFactor = gfx.BlendFactor.ONE;
-        // 挂 modelRoot：粒子从模型中心迸发（layer=UI 层由 UI 相机渲染，正面朝向屏幕）
-        root.addChild(n);
-        this.fxNodes.push(n);
-        // 内置白色纹理：default_sprite 的 ImageAsset 包成 Texture2D 再包 SpriteFrame
-        assetManager.loadAny({ uuid: '20835ba4-6145-4fbc-a58a-051ce700aa3e' }, (err, img) => {
-            if (err || !img || !n.isValid) return;
-            const tex = new Texture2D();
-            tex.image = img;
-            const sf = new SpriteFrame();
-            sf.texture = tex;
-            sf.rect = new Rect(0, 0, tex.width, tex.height);
-            sf.packable = false;
-            ps.spriteFrame = sf;
-            ps.resetSystem();                             // 注入纹理后启动发射
-        });
     }
 
     /** 爆裂暖色冲击波：两圈橙红圆环从模型中心快速扩散（与引擎演示冰蓝环共用绘制/驱动） */
