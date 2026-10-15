@@ -1,11 +1,12 @@
-import { Mesh, native, sys, utils } from 'cc';
+import { Mesh, native, sys } from 'cc';
+import { buildShardMesh } from './ShardCutter';
 
 /**
  * 解体特效碎片模板的全局缓存（模块级单例，跨场景切换存活）。
  *
  * 背景：Debug 场景每次进入都会重新实例化模型并现场切碎片网格（大模型上数百毫秒），
  * 而切网格结果只取决于「源网格数据 + 档位」，与模型实例、解体模式无关，因此可固化复用：
- *  - 内存：按 prefab 资源 uuid + 档位 持有 utils.createMesh 生成的 Mesh，跨场景直接复用，
+ *  - 内存：按 prefab 资源 uuid + 档位 持有 buildShardMesh 生成的 Mesh，跨场景直接复用，
  *    重进场景零切割、零重复上传显存；
  *  - 磁盘（仅 native）：碎片原始数据落盘到 App 可写目录，下次启动读文件重建 Mesh，
  *    跳过切割（仅剩 GPU 上传）；浏览器预览无文件系统，自动走纯内存缓存。
@@ -15,8 +16,11 @@ import { Mesh, native, sys, utils } from 'cc';
  * 绑定时从当前实例的渲染器取（材质实例也不能跨场景复用）。
  */
 
-/** 缓存格式版本：切割算法或落盘格式变更时 +1，旧缓存自动失效 */
-const CACHE_VERSION = 1;
+/**
+ * 缓存格式版本：切割算法或落盘格式变更时 +1，旧缓存自动失效。
+ * v2：索引支持 32 位（大碎片破 65535 顶点上限，见 buildShardMesh）。
+ */
+const CACHE_VERSION = 2;
 /** 磁盘缓存目录名（位于 App 可写路径下） */
 const DISK_DIR = 'shard_cache';
 /** 磁盘缓存文件数上限（超出按写入时间删最旧） */
@@ -54,7 +58,8 @@ export interface ShardBlob {
     positions: Float32Array;
     normals: Float32Array | null;
     uvs: Float32Array | null;
-    indices: Uint16Array;
+    /** 索引宽度按组顶点数自适应：≤65535 为 16 位，超出为 32 位（见 buildShardMesh） */
+    indices: Uint16Array | Uint32Array;
 }
 
 /** 运行时碎片模板：切好的网格 + 来源渲染节点路径（Mesh 跨场景复用，路径按实例重解析） */
@@ -123,15 +128,10 @@ export class ShardStore {
         }
     }
 
-    /** 由原始碎片数据构建 Mesh（读盘重建与现场切割共用；数据拷贝进 GPU 缓冲） */
+    /** 由原始碎片数据构建 Mesh（读盘重建与现场切割共用；大碎片自动用 32 位索引） */
     public static buildEntries(blobs: ShardBlob[]): ShardEntry[] {
         return blobs.map((b) => ({
-            mesh: utils.createMesh({
-                positions: b.positions,
-                normals: b.normals ?? undefined,
-                uvs: b.uvs ?? undefined,
-                indices: b.indices,
-            }),
+            mesh: buildShardMesh(b),
             nodePath: b.nodePath,
         }));
     }
@@ -205,9 +205,10 @@ export class ShardStore {
      * 二进制格式（小端）：
      *   [magic 4B 'SHRD'][version u16][cap u16][shardCount u32][指纹 7×f32]
      *   每碎片：[pathLen u16][path UTF-16 码元][flags u8][posCount u32][idxCount u32]
-     *          [positions f32×3n][normals? f32×3n][uvs? f32×2n][indices u16×m]
+     *          [positions f32×3n][normals? f32×3n][uvs? f32×2n][indices 16/32 位×m]
+     * flags：bit0 有法线 / bit1 有 UV / bit2 索引为 32 位（组顶点超 65535 的大碎片）。
      * 每个 TypedArray 段前插 Padding 做 4 字节对齐，读写均用视图整段拷贝（快）。
-     * 源数据本就是 f32/u16（readAttribute / createMesh 输入），往返无损。
+     * 源数据本就是 f32 与 16/32 位索引（readAttribute / buildShardMesh 输入），往返无损。
      */
     private static serialize(blobs: ShardBlob[], cap: number, fingerprint: number[]): ArrayBuffer {
         // 预计算总长（与写入同序模拟 offset，保证恰好覆盖）
@@ -217,7 +218,8 @@ export class ShardStore {
             size = align4(size) + b.positions.length * 4;
             if (b.normals) size = align4(size) + b.normals.length * 4;
             if (b.uvs) size = align4(size) + b.uvs.length * 4;
-            size = align4(size) + b.indices.length * 2;
+            // 索引宽度：16 或 32 位（flags bit2 标记）
+            size = align4(size) + b.indices.length * (b.indices.BYTES_PER_ELEMENT === 4 ? 4 : 2);
         }
         const buf = new ArrayBuffer(size);
         const dv = new DataView(buf);
@@ -240,7 +242,9 @@ export class ShardStore {
                 dv.setUint16(o, b.nodePath.charCodeAt(i));
                 o += 2;
             }
-            dv.setUint8(o, (b.normals ? 1 : 0) | (b.uvs ? 2 : 0));
+            // flags：bit0 有法线 / bit1 有 UV / bit2 索引为 32 位
+            const idx32 = b.indices.BYTES_PER_ELEMENT === 4;
+            dv.setUint8(o, (b.normals ? 1 : 0) | (b.uvs ? 2 : 0) | (idx32 ? 4 : 0));
             o += 1;
             dv.setUint32(o, b.positions.length / 3);
             o += 4;
@@ -249,7 +253,7 @@ export class ShardStore {
             o = ShardStore.writeF32(buf, o, b.positions);
             if (b.normals) o = ShardStore.writeF32(buf, o, b.normals);
             if (b.uvs) o = ShardStore.writeF32(buf, o, b.uvs);
-            o = ShardStore.writeU16(buf, o, b.indices);
+            o = idx32 ? ShardStore.writeU32(buf, o, b.indices as Uint32Array) : ShardStore.writeU16(buf, o, b.indices as Uint16Array);
         }
         return buf;
     }
@@ -264,6 +268,12 @@ export class ShardStore {
         o = align4(o);
         new Uint16Array(buf, o, src.length).set(src);
         return o + src.length * 2;
+    }
+
+    private static writeU32(buf: ArrayBuffer, o: number, src: Uint32Array): number {
+        o = align4(o);
+        new Uint32Array(buf, o, src.length).set(src);
+        return o + src.length * 4;
     }
 
     /** 反序列化：任何校验失败返回 null（调用方删文件并回退重切） */
@@ -326,10 +336,15 @@ export class ShardStore {
                 uvs = new Float32Array(new Float32Array(buf, o, posCount * 2));
                 o += posCount * 8;
             }
+            // 索引宽度：flags bit2 = 32 位
+            const idx32 = (flags & 4) !== 0;
+            const idxBytes = idx32 ? 4 : 2;
             o = align4(o);
-            if (o + idxCount * 2 > buf.byteLength) return null;
-            const indices = new Uint16Array(new Uint16Array(buf, o, idxCount));
-            o += idxCount * 2;
+            if (o + idxCount * idxBytes > buf.byteLength) return null;
+            const indices: Uint16Array | Uint32Array = idx32
+                ? new Uint32Array(new Uint32Array(buf, o, idxCount))
+                : new Uint16Array(new Uint16Array(buf, o, idxCount));
+            o += idxCount * idxBytes;
 
             out.push({ nodePath, positions, normals, uvs, indices });
         }
