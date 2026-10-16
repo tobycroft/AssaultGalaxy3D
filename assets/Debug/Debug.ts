@@ -350,8 +350,6 @@ export class Debug extends Component {
     private cosmosBar: Node | null = null;
     /** 宇宙切换按钮节点（切换时刷新选中态外观） */
     private cosmosButtons: Node[] = [];
-    /** 模型列表标题节点（ListCaption，宇宙预览 tab 隐藏） */
-    private listCaption: Node | null = null;
     /** 宇宙贴图是否已加载过（宇宙 tab 首次打开才加载默认宇宙，避免进场景即占带宽） */
     private cosmosLoaded = false;
     /** 当前宇宙目录（db:// URL，按钮选中态判断用） */
@@ -414,16 +412,16 @@ export class Debug extends Component {
         const canvas = this.node;
         this.statusLabel = canvas.getChildByName('StatusLabel')?.getComponent(Label) ?? null;
         this.modelButtonContainer = canvas.getChildByName('ModelButtons') ?? null;
-        // 模型列表标题：切到宇宙预览 tab 时隐藏（该 tab 不展示模型列表）
-        this.listCaption = canvas.getChildByName('ListCaption') ?? null;
 
         // 返回按钮背景由场景中 BackButton 节点自带的 Sprite 提供（颜色 45,74,122），
         // 不再运行时 addComponent(Graphics)：一个节点只能有一个渲染组件，
         // 补画会触发 "Can't add renderable component" 告警且该 Graphics 不会渲染
 
-        // 列表已按分类展示（各类自带标题），旧的固定标题改为通用文案
-        const caption = canvas.getChildByName('ListCaption')?.getComponent(Label);
-        if (caption) caption.string = '模型列表';
+        // 顶部标题（Debug·模型预览）与模型列表标题：顶层大 tag 已标明分区，均不再展示
+        const title = canvas.getChildByName('TitleLabel');
+        if (title) title.active = false;
+        const caption = canvas.getChildByName('ListCaption');
+        if (caption) caption.active = false;
     }
 
     /**
@@ -609,10 +607,9 @@ export class Debug extends Component {
     /** 切换顶层大 tag：模型预览（模型列表+特效栏）/ 宇宙预览（宇宙切换按钮） */
     private switchMainTab(index: number): void {
         this.mainTab = index;
-        // 模型预览相关 UI：宇宙 tab 下整体隐藏
+        // 模型预览相关 UI：宇宙 tab 下整体隐藏（标题类文字已由大 tag 取代，不再动态显隐）
         if (this.modelButtonContainer) this.modelButtonContainer.active = index === 0;
         if (this.effectBar) this.effectBar.active = index === 0;
-        if (this.listCaption) this.listCaption.active = index === 0;
         // 宇宙预览面板
         if (this.cosmosBar) this.cosmosBar.active = index === 1;
         // 宇宙预览时隐藏模型（纯宇宙背景），切回时恢复
