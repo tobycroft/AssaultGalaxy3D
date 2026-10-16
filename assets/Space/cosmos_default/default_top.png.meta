@@ -2,7 +2,7 @@
   "ver": "1.0.27",
   "importer": "image",
   "imported": true,
-  "uuid": "335ed5fd-1b88-4805-b5db-d8f5ad0be9c0",
+  "uuid": "9ed7a01d-7569-4cac-8d58-ecc879337623",
   "files": [
     ".json",
     ".png"
@@ -10,8 +10,8 @@
   "subMetas": {
     "6c48a": {
       "importer": "texture",
-      "uuid": "335ed5fd-1b88-4805-b5db-d8f5ad0be9c0@6c48a",
-      "displayName": "生成天空盒子贴图",
+      "uuid": "9ed7a01d-7569-4cac-8d58-ecc879337623@6c48a",
+      "displayName": "default_top",
       "id": "6c48a",
       "name": "texture",
       "userData": {
@@ -22,7 +22,7 @@
         "mipfilter": "none",
         "anisotropy": 0,
         "isUuid": true,
-        "imageUuidOrDatabaseUri": "335ed5fd-1b88-4805-b5db-d8f5ad0be9c0",
+        "imageUuidOrDatabaseUri": "9ed7a01d-7569-4cac-8d58-ecc879337623",
         "visible": false
       },
       "ver": "1.0.22",
@@ -37,6 +37,6 @@
     "type": "texture",
     "fixAlphaTransparencyArtifacts": false,
     "hasAlpha": false,
-    "redirect": "335ed5fd-1b88-4805-b5db-d8f5ad0be9c0@6c48a"
+    "redirect": "9ed7a01d-7569-4cac-8d58-ecc879337623@6c48a"
   }
 }

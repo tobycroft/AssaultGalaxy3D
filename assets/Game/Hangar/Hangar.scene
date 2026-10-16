@@ -340,7 +340,8 @@
     },
     "_enabled": true,
     "__prefab": null,
-    "skyboxDir": "db://assets/Space/cosmos1",
+    "skyboxDir": "db://assets/Space/cosmos_default",
+    "facePrefix": "",
     "rotationAngle": 0,
     "useIBL": true,
     "_id": "ebQZ14XyNBjq4LCoz6Vn7q"
