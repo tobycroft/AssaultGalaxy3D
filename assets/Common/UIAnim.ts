@@ -1,4 +1,4 @@
-import { Node, tween, UIOpacity, Vec3 } from 'cc';
+import { Node, tween, UIOpacity, Vec3, warn } from 'cc';
 
 /** 获取节点上的 UIOpacity，没有则添加 */
 function opacity(node: Node): UIOpacity {
@@ -46,6 +46,12 @@ export function pressEffect(node: Node, pressScale = 0.9): void {
 
 /** 整体淡出（含所有子 UI），结束后执行回调；用于切换场景前的过渡 */
 export function fadeOutThen(node: Node, duration: number, then: () => void): void {
+    // 场景根（Scene）不允许 addComponent，无法淡出：告警并直接执行回调，避免崩溃
+    if (node.scene === node) {
+        warn('[UIAnim] fadeOutThen 传入的是场景根节点（无法淡出），请传 Canvas；本次直接执行回调');
+        then();
+        return;
+    }
     const o = opacity(node);
     tween(o).to(duration, { opacity: 0 }).call(then).start();
 }

@@ -84,7 +84,9 @@ export class SDebug extends Component {
 
     /** 淡出后切换场景（与 Home.switchScene 一致的过渡） */
     private gotoScene(name: string): void {
-        fadeOutThen(this.node.parent!, 0.2, () => director.loadScene(name));
+        // 注意：fadeOutThen 需要给节点加 UIOpacity，场景根（Scene）不允许加组件，
+        // 本组件直接挂 Canvas，淡出对象就是 this.node 本身（其子树 UI 一并淡出）
+        fadeOutThen(this.node, 0.2, () => director.loadScene(name));
     }
 
     /** 科技风按钮（背景 + 文字），返回按钮节点 */
