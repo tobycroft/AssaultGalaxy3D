@@ -55,7 +55,7 @@ const SHIP_SPIN = 0.12;
  */
 @ccclass('Opening')
 export class Opening extends Component {
-    /** 运镜透视相机（自带的正交 UI 相机已禁用） */
+    /** 运镜透视相机（3D 模型层 + 天空盒；UI 由场景自带正交相机叠加） */
     private camNode: Node | null = null;
     /** 主角飞船节点（未加载完为 null） */
     private ship: Node | null = null;
@@ -67,18 +67,10 @@ export class Opening extends Component {
     private elapsed = 0;
     /** 相机运镜进度（秒）：0~DOLLY_DURATION 推近中，>= DOLLY_DURATION 已到位；-1 未开始 */
     private dollyT = -1;
-    /** 模型是否加载完成（完成前不运镜） */
-    private ready = false;
     /** 状态栏 Label */
     private statusLabel: Label | null = null;
 
     onLoad(): void {
-        // 防重复挂载（编辑器误操作曾挂上两个 Opening）：只保留第一个实例，其余自毁
-        const all = this.node.getComponents(Opening);
-        if (all.length > 1 && all[0] !== this) {
-            this.destroy();
-            return;
-        }
         this.addLights();
         this.setupCamera();
         // 宇宙背景（默认星系天空盒，与 Debug 宇宙预览/ Hangar 同一套组件）
@@ -120,12 +112,19 @@ export class Opening extends Component {
     }
 
     /**
-     * 透视相机：禁用场景自带的正交 UI 相机（与 Debug 宇宙预览同理，
-     * 3D 运镜需要透视投影），新建运镜相机并放置到远景起点。
+     * 双相机分工（与 Debug 宇宙预览同一套已验证方案）：
+     * - 运镜透视相机：天空盒只在透视相机下渲染，clearFlags 必须为 SKYBOX（SOLID_COLOR
+     *   会把宇宙背景清成纯色），visibility 仅 3D 模型层，放置到远景起点；
+     * - 场景自带正交相机：保留并改为只画 UI_2D 层、DONT_CLEAR 不清屏、priority 1 后画，
+     *   把状态字叠加在 3D 画面之上（UI_2D 层在透视相机下无法正常渲染）。
      */
     private setupCamera(): void {
-        const old = this.node.scene.getChildByName('Camera');
-        if (old) old.active = false;
+        const uiCam = this.node.scene.getChildByName('Camera')?.getComponent(Camera) ?? null;
+        if (uiCam) {
+            uiCam.visibility = UI_LAYER;
+            uiCam.clearFlags = Camera.ClearFlag.DONT_CLEAR;
+            uiCam.priority = 1;
+        }
 
         const camNode = new Node('OpeningCamera');
         camNode.layer = MODEL_LAYER;
@@ -135,8 +134,8 @@ export class Opening extends Component {
         cam.fov = 45;
         cam.near = 1;
         cam.far = 12000;
-        cam.clearFlags = Camera.ClearFlag.SOLID_COLOR;
-        cam.clearColor = new Color(4, 8, 18, 255);
+        cam.clearFlags = Camera.ClearFlag.SKYBOX;
+        cam.visibility = MODEL_LAYER;
         this.node.scene.addChild(camNode);
         this.camNode = camNode;
     }
@@ -163,7 +162,6 @@ export class Opening extends Component {
         const onOne = (): void => {
             pending--;
             if (pending > 0) return;
-            this.ready = true;
             this.setStatus('第一章 · 深空前线');
             this.startCameraDolly();
         };
@@ -245,9 +243,9 @@ export class Opening extends Component {
             minX = Math.min(minX, c.x - h.x);
             maxX = Math.max(maxX, c.x + h.x);
             minY = Math.min(minY, c.y - h.y);
-            maxY = Math.max(maxY, c.y - h.y);
+            maxY = Math.max(maxY, c.y + h.y);
             minZ = Math.min(minZ, c.z - h.z);
-            maxZ = Math.max(maxZ, c.z - h.z);
+            maxZ = Math.max(maxZ, c.z + h.z);
         }
         if (!isFinite(minX)) return false;
 
