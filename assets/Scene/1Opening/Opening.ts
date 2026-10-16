@@ -18,6 +18,7 @@ import {
     geometry,
 } from 'cc';
 import { TechText } from '../../Common/TechUI';
+import { ExitOnBack } from '../../Common/ExitOnBack';
 import { SpaceSkybox } from '../../Space/SpaceSkybox';
 
 const { ccclass } = _decorator;
@@ -31,26 +32,28 @@ const MODEL_LAYER = 1;
 const SHIP_SIZE = 300;
 /** 太空站缩放尺寸（远景地标，比飞船大） */
 const STATION_SIZE = 900;
-/** 太空站在场景中的位置（远景侧后方） */
-const STATION_POS = new Vec3(-1600, 260, -2600);
+/** 太空站在场景中的位置（远景前侧方，越过船头的背景地标） */
+const STATION_POS = new Vec3(-1400, 500, 2600);
 
-/** 相机运镜：起点（很远）/ 终点（飞船侧前方） */
-const CAM_START = new Vec3(900, 450, 2200);
-const CAM_END = new Vec3(330, 150, 640);
+/**
+ * 相机运镜：起点（飞船后方很远）/ 终点（船尾特写）。
+ * 飞船适配后机尾在 z≈-150、机头在 z≈+150（长轴沿 Z，尖头 +Z 为机头），
+ * 起终点都在船尾侧（-Z），镜头从后方远处一路追近、最终停在船尾发动机前。
+ */
+const CAM_START = new Vec3(700, 420, -2400);
+const CAM_END = new Vec3(80, 130, -450);
 /** 相机运镜时长（秒）与缓动 */
 const DOLLY_DURATION = 6;
 /** 飞船漂浮幅度与频率（世界单位 / 弧度每秒） */
 const SHIP_BOB_AMP = 12;
 const SHIP_BOB_OMEGA = 0.6;
-/** 飞船自旋角速度（rad/s） */
-const SHIP_SPIN = 0.12;
 
 /**
  * 开场第一幕（1Opening）：游戏启动后的 3D 开场镜头。
- * 画面内容：太空中的主角飞船（缓速自旋 + 上下漂浮，呈飞行姿态）与远景太空站，
+ * 画面内容：太空中的主角飞船（缓慢上下漂浮，呈飞行姿态）与远景太空站，
  * 背景为宇宙天空盒（SpaceSkybox，默认星系）。
- * 镜头动画：透视相机从很远处经 6 秒缓动（sineInOut）推近到飞船侧前方，
- * 全程注视飞船；模型异步加载完成后才开始运镜。
+ * 镜头动画：透视相机从飞船后方很远处经 6 秒缓动（sineInOut）追近，
+ * 最终停在船尾发动机特写；全程注视飞船；模型异步加载完成后才开始运镜。
  * 组件挂 Canvas（与 Debug / Hangar 一致），Camera / 模型 / 灯光挂场景根。
  */
 @ccclass('Opening')
@@ -77,16 +80,18 @@ export class Opening extends Component {
         this.node.addComponent(SpaceSkybox);
         this.buildStatus();
         this.loadActors();
+        // 游戏内退出监听（与 Hangar 一致）：ESC / Android 返回键弹出退出菜单
+        this.node.addComponent(ExitOnBack);
     }
 
     update(dt: number): void {
         this.elapsed += dt;
         if (!this.camNode) return;
 
-        // 飞船漂浮（上下正弦）+ 自旋，模拟太空巡航姿态（加载失败时跳过，不影响运镜）
+        // 飞船漂浮（上下正弦），模拟太空巡航姿态（加载失败时跳过，不影响运镜）；
+        // 不做自旋——运镜终点停在船尾特写，自旋会把船尾转离镜头
         if (this.ship) {
             this.ship.setPosition(this.shipBase.x, this.shipBase.y + Math.sin(this.elapsed * SHIP_BOB_OMEGA) * SHIP_BOB_AMP, this.shipBase.z);
-            this.ship.rotate(Quat.fromAxisAngle(new Quat(), Vec3.UP, SHIP_SPIN * dt));
         }
 
         // 太空站缓速自旋
