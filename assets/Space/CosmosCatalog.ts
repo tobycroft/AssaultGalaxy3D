@@ -11,10 +11,16 @@ export interface CosmosDef {
     /** 面板按钮短标签 */
     label: string;
     /**
-     * 六面贴图资源 UUID，顺序必须与 TextureCube.FaceIndex 一致：
+     * 六面贴图资源 UUID（LDR PNG 方案），顺序必须与 TextureCube.FaceIndex 一致：
      * right=0(+X) left=1(-X) top=2(+Y) bottom=3(-Y) front=4(+Z) back=5(-Z)
      */
-    faces: string[];
+    faces?: string[];
+    /**
+     * texture-cube 资源 UUID（HDR 方案）：全景 HDR 在编辑器里经 importer 转为
+     * Cubemap 后直接加载 TextureCube，保留完整高动态范围（代码组装走 Texture2D
+     * 通道会丢 HDR 特性）。与 faces 二选一，优先使用本字段。
+     */
+    cubeMapUuid?: string;
 }
 
 export const COSMOS_LIST: CosmosDef[] = [
@@ -90,6 +96,12 @@ export const COSMOS_LIST: CosmosDef[] = [
             '747c2a3a-c79e-4024-8a5b-ba7aab9b8b6d', // back
         ],
     },
+    {
+        // HDR 星云（全景 .hdr 经编辑器 importer 转为 Cubemap 后直接加载 TextureCube）
+        dir: 'db://assets/Space/cosmos_hdr',
+        label: 'HDR',
+        cubeMapUuid: 'ee5bb848-53d2-4e17-9003-81779f887972',
+    },
 ];
 
 /** 按目录查找宇宙定义（找不到返回 null） */
@@ -98,20 +110,35 @@ export function findCosmos(dir: string): CosmosDef | null {
 }
 
 /**
- * 按 UUID 加载六面贴图，组装为 TextureCube 并应用为当前场景天空盒。
+ * 应用一套宇宙天空盒（自动区分两种模式）：
+ * - cubeMapUuid（HDR）：直接加载 texture-cube 资源（cc.TextureCube），保留完整高动态范围；
+ * - faces（LDR）：按 UUID 加载六面贴图，运行时组装 TextureCube。
  *
- * 注意：必须用资源 UUID 加载——运行时 assetManager.loadAny 不解析 db://
- * 编辑器 URL（会拼出 /assets/general/import/db/db://... 的请求导致 404），
- * resources 目录也只覆盖 assets/resources 之外的路径，UUID 是运行时最稳的方式。
+ * 注意：运行时必须用资源 UUID（{ uuid } 对象形式）加载——db:// 编辑器 URL 不被解析，
+ * 会拼出 /assets/general/import/db/db://... 导致 404。
  *
  * 加载失败仅告警不抛异常（调用方面板可继续操作）。
  */
-export function applyCosmosSkybox(faces: string[], rotationAngle = 0, useIBL = true): void {
+export function applyCosmosSkybox(def: CosmosDef, rotationAngle = 0, useIBL = true): void {
+    if (def.cubeMapUuid) {
+        assetManager.loadAny({ uuid: def.cubeMapUuid }, (err, cubeMap) => {
+            if (err || !cubeMap) {
+                warn('[CosmosCatalog] HDR 宇宙贴图（texture-cube）加载失败:', def.dir, err);
+                return;
+            }
+            setSceneSkybox(cubeMap as TextureCube, rotationAngle, useIBL);
+        });
+        return;
+    }
+    if (!def.faces || def.faces.length < 6) {
+        warn('[CosmosCatalog] 宇宙定义缺少 faces 或 cubeMapUuid:', def.dir);
+        return;
+    }
     // 与项目内其他资源加载一致，用 { uuid } 对象形式（运行时唯一可靠方式）
-    const requests = faces.map((uuid) => ({ uuid }));
+    const requests = def.faces.map((uuid) => ({ uuid }));
     assetManager.loadAny(requests, (err, assets) => {
         if (err || !assets || assets.length < 6) {
-            warn('[CosmosCatalog] 宇宙天空盒贴图加载失败:', err);
+            warn('[CosmosCatalog] 宇宙天空盒贴图加载失败:', def.dir, err);
             return;
         }
         const textures: Texture2D[] = (assets as ImageAsset[]).map((image) => {
@@ -119,20 +146,24 @@ export function applyCosmosSkybox(faces: string[], rotationAngle = 0, useIBL = t
             texture.image = image;
             return texture;
         });
-        const cubeMap = TextureCube.fromTexture2DArray(textures);
-        const scene = director.getScene();
-        if (!scene) {
-            warn('[CosmosCatalog] 当前无活动场景，天空盒设置跳过');
-            return;
-        }
-        let skybox = scene.globals.skybox;
-        if (!skybox) {
-            skybox = new Skybox();
-            scene.globals.skybox = skybox;
-        }
-        skybox.enabled = true;
-        skybox.envmap = cubeMap;
-        skybox.useIBL = useIBL;
-        skybox.rotationAngle = rotationAngle;
+        setSceneSkybox(TextureCube.fromTexture2DArray(textures), rotationAngle, useIBL);
     });
+}
+
+/** 把组装/加载好的 TextureCube 设为当前场景天空盒 */
+function setSceneSkybox(cubeMap: TextureCube, rotationAngle: number, useIBL: boolean): void {
+    const scene = director.getScene();
+    if (!scene) {
+        warn('[CosmosCatalog] 当前无活动场景，天空盒设置跳过');
+        return;
+    }
+    let skybox = scene.globals.skybox;
+    if (!skybox) {
+        skybox = new Skybox();
+        scene.globals.skybox = skybox;
+    }
+    skybox.enabled = true;
+    skybox.envmap = cubeMap;
+    skybox.useIBL = useIBL;
+    skybox.rotationAngle = rotationAngle;
 }

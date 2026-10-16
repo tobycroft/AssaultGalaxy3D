@@ -716,7 +716,7 @@ export class Debug extends Component {
     private switchCosmos(def: CosmosDef): void {
         this.cosmosLoaded = true;
         this.cosmosDir = def.dir;
-        applyCosmosSkybox(def.faces);
+        applyCosmosSkybox(def);
         this.refreshCosmosButtons();
         this.setStatus(`宇宙预览：${def.label}星系`);
     }

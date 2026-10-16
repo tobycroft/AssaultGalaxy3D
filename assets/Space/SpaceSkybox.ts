@@ -38,6 +38,6 @@ export class SpaceSkybox extends Component {
             warn(`[SpaceSkybox] 天空盒目录未登记到 CosmosCatalog.COSMOS_LIST: ${this.skyboxDir}`);
             return;
         }
-        applyCosmosSkybox(def.faces, this.rotationAngle, this.useIBL);
+        applyCosmosSkybox(def, this.rotationAngle, this.useIBL);
     }
 }
