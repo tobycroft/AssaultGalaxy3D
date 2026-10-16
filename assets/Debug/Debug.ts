@@ -39,6 +39,7 @@ import { paintTechButton, TechButtonKind, techTextColor, TechText } from '../Com
 import { allShardCaps, FX_MAX_SHARDS, FX_SHATTER_CAPS, ShardBlob, ShardEntry, ShardStore } from '../Common/ShardStore';
 import { extractShards, modelFingerprint, readSubMeshes, resolveNodePath, SrcSubMesh } from '../Common/ShardCutter';
 import { BrustExplosion, BrustType, BRUST_TOTAL_LIFE } from '../Effect/Brust/BrustExplosion';
+import { COSMOS_LIST, applyCosmosSkybox } from '../Space/CosmosCatalog';
 
 const { ccclass } = _decorator;
 
@@ -245,6 +246,22 @@ const CATEGORY_NAMES: Record<string, string> = {
     asteroid: '小行星',
 };
 
+// ===== 顶层大 tag：模型预览 / 宇宙预览 =====
+/** 顶层大 tag 名称（索引即 tab 号：0=模型预览，1=宇宙预览） */
+const MAIN_TAB_LABELS = ['模型预览', '宇宙预览'];
+/** 顶层大 tag 按钮尺寸（比特效 tab 大一档，标题下方居中排布） */
+const MAIN_TAB_W = 220;
+const MAIN_TAB_H = 56;
+const MAIN_TAB_GAP = 20;
+/** 顶层大 tag 行中心 Y（标题 320 下方） */
+const MAIN_TAB_Y = 258;
+/** 宇宙预览切换按钮尺寸与间距（一排 6 套，居中排布） */
+const COSMOS_BTN_W = 150;
+const COSMOS_BTN_H = 52;
+const COSMOS_BTN_GAP = 14;
+/** 宇宙按钮行中心 Y（预览区中部） */
+const COSMOS_BAR_Y = 40;
+
 /**
  * Debug 调试场景控制器：模型预览 + 解体特效 + 引擎特效演示。
  * 进入流程：双进度条读条（模型加载 / 效果预缓存）→ 默认加载第一个模型并
@@ -323,6 +340,22 @@ export class Debug extends Component {
     private fxTabButtons: Node[] = [];
     /** 各 tab 的按钮容器（切换时切 active；索引同 fxTab） */
     private fxTabRoots: Node[] = [];
+    /** 顶层大 tag 当前索引（0=模型预览，1=宇宙预览） */
+    private mainTab = 0;
+    /** 顶层大 tag 切换按钮节点（切换时刷新选中态外观） */
+    private mainTabButtons: Node[] = [];
+    /** 特效按钮栏根节点（模型预览 tab 显示，宇宙预览 tab 隐藏） */
+    private effectBar: Node | null = null;
+    /** 宇宙预览面板根节点（一排宇宙切换按钮） */
+    private cosmosBar: Node | null = null;
+    /** 宇宙切换按钮节点（切换时刷新选中态外观） */
+    private cosmosButtons: Node[] = [];
+    /** 模型列表标题节点（ListCaption，宇宙预览 tab 隐藏） */
+    private listCaption: Node | null = null;
+    /** 宇宙贴图是否已加载过（宇宙 tab 首次打开才加载默认宇宙，避免进场景即占带宽） */
+    private cosmosLoaded = false;
+    /** 当前宇宙目录（db:// URL，按钮选中态判断用） */
+    private cosmosDir = COSMOS_LIST[0].dir;
     /** 当前引擎特效演示类型（与解体特效互斥，共用 fxRunning） */
     private engineFx: EngineFxKind | null = null;
     /** 引擎特效节点列表（结束统一清理） */
@@ -353,6 +386,8 @@ export class Debug extends Component {
         this.bindSceneUI();
         this.setupModelRoot();
         this.createEffectBar();
+        // 顶层大 tag（模型预览/宇宙预览）与宇宙切换面板；宇宙预览无预加载，按需加载贴图
+        this.createMainTabs();
         this.loadModels();
     }
 
@@ -365,7 +400,8 @@ export class Debug extends Component {
             this.spinNode.setRotationFromEuler(0, 0, this.spinAngle);
         }
         this.updateFx(dt);
-        if (this.spin && this.currentModel && this.currentModel.active) {
+        // 宇宙预览 tab 下 modelRoot 整体隐藏，模型停旋（省 CPU 且不可见时无需旋转）
+        if (this.spin && this.currentModel && this.currentModel.active && this.modelRoot?.active) {
             this.currentModel.rotate(Quat.fromAxisAngle(new Quat(), Vec3.UP, dt * 0.6));
         }
     }
@@ -378,6 +414,8 @@ export class Debug extends Component {
         const canvas = this.node;
         this.statusLabel = canvas.getChildByName('StatusLabel')?.getComponent(Label) ?? null;
         this.modelButtonContainer = canvas.getChildByName('ModelButtons') ?? null;
+        // 模型列表标题：切到宇宙预览 tab 时隐藏（该 tab 不展示模型列表）
+        this.listCaption = canvas.getChildByName('ListCaption') ?? null;
 
         // 返回按钮背景由场景中 BackButton 节点自带的 Sprite 提供（颜色 45,74,122），
         // 不再运行时 addComponent(Graphics)：一个节点只能有一个渲染组件，
@@ -411,6 +449,8 @@ export class Debug extends Component {
         bar.addComponent(UITransform).setContentSize(totalW, barH);
         bar.setPosition(0, -278, 0);
         this.node.addChild(bar);
+        // 顶层大 tag 切换时据此隐藏/显示整个特效栏（宇宙预览 tab 不需要特效按钮）
+        this.effectBar = bar;
 
         // tab 切换行（居中）
         const tabRowW = FX_TAB_LABELS.length * FX_TAB_W + (FX_TAB_LABELS.length - 1) * FX_TAB_GAP;
@@ -486,6 +526,128 @@ export class Debug extends Component {
             const kind: TechButtonKind = i === index ? 'primary' : 'ghost';
             const g = btn.getComponent(Graphics);
             if (g) paintTechButton(g, FX_TAB_W, FX_TAB_H, kind);
+            const l = btn.getChildByName('Label')?.getComponent(Label);
+            if (l) l.color = techTextColor(kind);
+        });
+    }
+
+    /**
+     * 创建顶层大 tag（标题下方居中）：模型预览 / 宇宙预览。
+     * tab 0「模型预览」= 现有全部内容（模型列表 + 特效栏，模型经读条预加载）；
+     * tab 1「宇宙预览」= 一排宇宙切换按钮，点按钮即切换场景天空盒，
+     * 不涉及模型预加载（贴图按需异步加载，首次打开该 tab 才加载默认宇宙）。
+     */
+    private createMainTabs(): void {
+        const tabRowW = MAIN_TAB_LABELS.length * MAIN_TAB_W + (MAIN_TAB_LABELS.length - 1) * MAIN_TAB_GAP;
+        MAIN_TAB_LABELS.forEach((label, i) => {
+            const x = -tabRowW / 2 + MAIN_TAB_W / 2 + i * (MAIN_TAB_W + MAIN_TAB_GAP);
+            const btn = new Node('MainTab_' + label);
+            btn.layer = UI_LAYER;
+            btn.setPosition(x, MAIN_TAB_Y, 0);
+            btn.addComponent(UITransform).setContentSize(MAIN_TAB_W, MAIN_TAB_H);
+            // 背景 Graphics 由 switchMainTab 按选中态重绘，此处只占位
+            btn.addComponent(Graphics);
+
+            const labNode = new Node('Label');
+            labNode.layer = UI_LAYER;
+            labNode.addComponent(UITransform).setContentSize(MAIN_TAB_W, MAIN_TAB_H);
+            const l = labNode.addComponent(Label);
+            l.string = label;
+            l.fontSize = 30;
+            l.horizontalAlign = Label.HorizontalAlign.CENTER;
+            l.verticalAlign = Label.VerticalAlign.CENTER;
+            btn.addChild(labNode);
+
+            btn.on(Node.EventType.TOUCH_END, () => this.switchMainTab(i), this);
+            this.node.addChild(btn);
+            this.mainTabButtons.push(btn);
+        });
+
+        this.createCosmosBar();
+        // 默认模型预览 tab（大 tag 选中态在此统一初始化）
+        this.switchMainTab(0);
+    }
+
+    /** 创建宇宙预览面板：一排宇宙切换按钮（点击即切换天空盒，无预加载） */
+    private createCosmosBar(): void {
+        const rowW = COSMOS_LIST.length * COSMOS_BTN_W + (COSMOS_LIST.length - 1) * COSMOS_BTN_GAP;
+        const bar = new Node('CosmosBar');
+        bar.layer = UI_LAYER;
+        bar.addComponent(UITransform).setContentSize(rowW, COSMOS_BTN_H);
+        bar.setPosition(0, COSMOS_BAR_Y, 0);
+        this.node.addChild(bar);
+        this.cosmosBar = bar;
+
+        COSMOS_LIST.forEach((def, i) => {
+            const x = -rowW / 2 + COSMOS_BTN_W / 2 + i * (COSMOS_BTN_W + COSMOS_BTN_GAP);
+            const btn = new Node('CosmosBtn_' + def.label);
+            btn.layer = UI_LAYER;
+            btn.setPosition(x, 0, 0);
+            btn.addComponent(UITransform).setContentSize(COSMOS_BTN_W, COSMOS_BTN_H);
+            // 背景 Graphics 由 refreshCosmosButtons 按选中态重绘，此处只占位
+            btn.addComponent(Graphics);
+
+            const labNode = new Node('Label');
+            labNode.layer = UI_LAYER;
+            labNode.addComponent(UITransform).setContentSize(COSMOS_BTN_W, COSMOS_BTN_H);
+            const l = labNode.addComponent(Label);
+            l.string = def.label;
+            l.fontSize = 26;
+            l.horizontalAlign = Label.HorizontalAlign.CENTER;
+            l.verticalAlign = Label.VerticalAlign.CENTER;
+            btn.addChild(labNode);
+
+            btn.on(Node.EventType.TOUCH_END, () => this.switchCosmos(def.dir, def.label), this);
+            bar.addChild(btn);
+            this.cosmosButtons.push(btn);
+        });
+
+        // 初始外观（默认宇宙选中态），贴图不在此处加载
+        this.refreshCosmosButtons();
+    }
+
+    /** 切换顶层大 tag：模型预览（模型列表+特效栏）/ 宇宙预览（宇宙切换按钮） */
+    private switchMainTab(index: number): void {
+        this.mainTab = index;
+        // 模型预览相关 UI：宇宙 tab 下整体隐藏
+        if (this.modelButtonContainer) this.modelButtonContainer.active = index === 0;
+        if (this.effectBar) this.effectBar.active = index === 0;
+        if (this.listCaption) this.listCaption.active = index === 0;
+        // 宇宙预览面板
+        if (this.cosmosBar) this.cosmosBar.active = index === 1;
+        // 宇宙预览时隐藏模型（纯宇宙背景），切回时恢复
+        if (this.modelRoot) this.modelRoot.active = index === 0;
+        // 大 tag 选中态（选中=primary 高亮，未选中=ghost 置暗）
+        this.mainTabButtons.forEach((btn, i) => {
+            const kind: TechButtonKind = i === index ? 'primary' : 'ghost';
+            const g = btn.getComponent(Graphics);
+            if (g) paintTechButton(g, MAIN_TAB_W, MAIN_TAB_H, kind);
+            const l = btn.getChildByName('Label')?.getComponent(Label);
+            if (l) l.color = techTextColor(kind);
+        });
+        // 宇宙 tab 首次打开：加载默认宇宙（此后切换只换贴图，无其他预加载）
+        if (index === 1 && !this.cosmosLoaded) {
+            this.switchCosmos(COSMOS_LIST[0].dir, COSMOS_LIST[0].label);
+            return;
+        }
+        this.setStatus(index === 0 ? '模型预览' : '宇宙预览：点击按钮切换宇宙背景');
+    }
+
+    /** 切换宇宙：异步加载对应目录六面贴图组装天空盒，并刷新按钮选中态 */
+    private switchCosmos(dir: string, label: string): void {
+        this.cosmosLoaded = true;
+        this.cosmosDir = dir;
+        applyCosmosSkybox(dir);
+        this.refreshCosmosButtons();
+        this.setStatus(`宇宙预览：${label}星系`);
+    }
+
+    /** 刷新宇宙按钮选中态（当前宇宙=primary 高亮，其余=ghost 置暗） */
+    private refreshCosmosButtons(): void {
+        this.cosmosButtons.forEach((btn, i) => {
+            const kind: TechButtonKind = COSMOS_LIST[i]?.dir === this.cosmosDir ? 'primary' : 'ghost';
+            const g = btn.getComponent(Graphics);
+            if (g) paintTechButton(g, COSMOS_BTN_W, COSMOS_BTN_H, kind);
             const l = btn.getChildByName('Label')?.getComponent(Label);
             if (l) l.color = techTextColor(kind);
         });
