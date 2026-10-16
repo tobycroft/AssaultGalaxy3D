@@ -16,7 +16,6 @@ import {
     DirectionalLight,
     Camera,
     geometry,
-    tween,
 } from 'cc';
 import { TechText } from '../../Common/TechUI';
 import { SpaceSkybox } from '../../Space/SpaceSkybox';
@@ -66,12 +65,20 @@ export class Opening extends Component {
     private station: Node | null = null;
     /** 场景计时（秒） */
     private elapsed = 0;
+    /** 相机运镜进度（秒）：0~DOLLY_DURATION 推近中，>= DOLLY_DURATION 已到位；-1 未开始 */
+    private dollyT = -1;
     /** 模型是否加载完成（完成前不运镜） */
     private ready = false;
     /** 状态栏 Label */
     private statusLabel: Label | null = null;
 
     onLoad(): void {
+        // 防重复挂载（编辑器误操作曾挂上两个 Opening）：只保留第一个实例，其余自毁
+        const all = this.node.getComponents(Opening);
+        if (all.length > 1 && all[0] !== this) {
+            this.destroy();
+            return;
+        }
         this.addLights();
         this.setupCamera();
         // 宇宙背景（默认星系天空盒，与 Debug 宇宙预览/ Hangar 同一套组件）
@@ -82,20 +89,34 @@ export class Opening extends Component {
 
     update(dt: number): void {
         this.elapsed += dt;
-        if (!this.ready || !this.ship || !this.camNode) return;
+        if (!this.camNode) return;
 
-        // 飞船漂浮（上下正弦）+ 自旋，模拟太空巡航姿态
-        const t = this.elapsed;
-        this.ship.setPosition(this.shipBase.x, this.shipBase.y + Math.sin(t * SHIP_BOB_OMEGA) * SHIP_BOB_AMP, this.shipBase.z);
-        this.ship.rotate(Quat.fromAxisAngle(new Quat(), Vec3.UP, SHIP_SPIN * dt));
+        // 飞船漂浮（上下正弦）+ 自旋，模拟太空巡航姿态（加载失败时跳过，不影响运镜）
+        if (this.ship) {
+            this.ship.setPosition(this.shipBase.x, this.shipBase.y + Math.sin(this.elapsed * SHIP_BOB_OMEGA) * SHIP_BOB_AMP, this.shipBase.z);
+            this.ship.rotate(Quat.fromAxisAngle(new Quat(), Vec3.UP, SHIP_SPIN * dt));
+        }
 
         // 太空站缓速自旋
         if (this.station) {
             this.station.rotate(Quat.fromAxisAngle(new Quat(), Vec3.UP, 0.05 * dt));
         }
 
-        // 相机全程注视飞船（运镜推近过程中保持构图）
-        this.camNode.lookAt(this.ship.worldPosition);
+        // 相机运镜：从远景起点手动插值推近到终点（sineInOut），避免依赖 tween 对
+        // Node.position 的补间行为；朝向由下方 lookAt 每帧维持
+        if (this.dollyT >= 0 && this.dollyT < DOLLY_DURATION) {
+            this.dollyT = Math.min(DOLLY_DURATION, this.dollyT + dt);
+            const k = this.dollyT / DOLLY_DURATION;
+            const e = 0.5 - 0.5 * Math.cos(Math.PI * k); // sineInOut
+            this.camNode.setPosition(
+                CAM_START.x + (CAM_END.x - CAM_START.x) * e,
+                CAM_START.y + (CAM_END.y - CAM_START.y) * e,
+                CAM_START.z + (CAM_END.z - CAM_START.z) * e,
+            );
+        }
+
+        // 相机全程注视飞船（运镜推近过程中保持构图；飞船缺失时注视原点）
+        this.camNode.lookAt(this.ship ? this.ship.worldPosition : Vec3.ZERO);
     }
 
     /**
@@ -146,9 +167,9 @@ export class Opening extends Component {
             this.setStatus('第一章 · 深空前线');
             this.startCameraDolly();
         };
-        resources.load('Model/spaceship/default_spaceship', Prefab, (err, prefab) => {
+        resources.load('Model/spaceship/default_hq', Prefab, (err, prefab) => {
             if (err || !prefab) {
-                this.setStatus('飞船模型加载失败：Model/spaceship/default_spaceship');
+                this.setStatus('飞船模型加载失败：Model/spaceship/default_hq');
                 onOne();
                 return;
             }
@@ -195,14 +216,13 @@ export class Opening extends Component {
     }
 
     /**
-     * 相机运镜：从远景起点 6 秒 sineInOut 推近到飞船侧前方，
-     * 朝向由 update 中的 lookAt 每帧维持。
+     * 启动相机运镜：把相机放回远景起点并清零运镜进度，
+     * 实际推近由 update 手动插值完成（sineInOut，时长 DOLLY_DURATION）。
      */
     private startCameraDolly(): void {
         if (!this.camNode) return;
-        tween(this.camNode)
-            .to(DOLLY_DURATION, { position: CAM_END }, { easing: 'sineInOut' })
-            .start();
+        this.camNode.setPosition(CAM_START);
+        this.dollyT = 0;
     }
 
     /** 包围盒适配：按最大边缩放到 targetSize 并居中到自身原点（与 Hangar.fitShip 同算法） */
