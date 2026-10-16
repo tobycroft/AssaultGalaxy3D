@@ -18,9 +18,9 @@ import {
     DirectionalLight,
     Camera,
 } from 'cc';
-import { fadeIn, pressEffect } from '../../Common/UIAnim';
-import { paintTechButton, TechText, techTextColor } from '../../Common/TechUI';
-import { ExitOnBack } from '../../Common/ExitOnBack';
+import { fadeIn, pressEffect } from '../Common/UIAnim';
+import { paintTechButton, TechText, techTextColor } from '../Common/TechUI';
+import { ExitOnBack } from '../Common/ExitOnBack';
 
 const { ccclass } = _decorator;
 
