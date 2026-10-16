@@ -357,11 +357,13 @@ export class Debug extends Component {
     /**
      * 宇宙预览专用透视相机：Cocos 天空盒只在透视（PERSPECTIVE）相机下渲染，
      * 场景主相机是正交（ORTHO，供 2D UI + 3D 模型预览共用），看不见天空盒。
-     * 因此宇宙 tab 下临时切换到此相机，切回模型 tab 时恢复主相机。
+     * 宇宙 tab 下本相机只负责画天空盒（visibility 仅 3D 层），UI 交由主相机叠加绘制。
      */
     private skyboxCamera: Camera | null = null;
-    /** 场景主相机引用（宇宙 tab 下临时禁用，切回模型预览恢复） */
+    /** 场景主相机（正交：模型 tab 全屏渲染；宇宙 tab 只画 UI 叠加） */
     private mainCamera: Camera | null = null;
+    /** 主相机原始 visibility / clearFlags / priority（宇宙 tab 下临时改为只画 UI，切回时还原） */
+    private mainCameraOrig = { visibility: 0, clearFlags: 0, priority: 0 };
     /** 当前引擎特效演示类型（与解体特效互斥，共用 fxRunning） */
     private engineFx: EngineFxKind | null = null;
     /** 引擎特效节点列表（结束统一清理） */
@@ -420,10 +422,16 @@ export class Debug extends Component {
         const canvas = this.node;
         this.statusLabel = canvas.getChildByName('StatusLabel')?.getComponent(Label) ?? null;
         this.modelButtonContainer = canvas.getChildByName('ModelButtons') ?? null;
-        // 场景主相机（正交，供模型预览 tab 使用；宇宙 tab 下临时禁用）。
+        // 场景主相机（正交，供模型预览 tab 全屏渲染；宇宙 tab 下改为只画 UI 叠加）。
         // 注意：Debug 组件挂在 Canvas 上，Camera 是 Canvas 的兄弟节点（场景根下），
         // 不能从 this.node 向下找，要从场景根找。
         this.mainCamera = this.node.scene.getChildByName('Camera')?.getComponent(Camera) ?? null;
+        // 缓存主相机原始渲染参数，宇宙 tab 切回时还原
+        if (this.mainCamera) {
+            this.mainCameraOrig.visibility = this.mainCamera.visibility;
+            this.mainCameraOrig.clearFlags = this.mainCamera.clearFlags;
+            this.mainCameraOrig.priority = this.mainCamera.priority;
+        }
 
         // 返回按钮背景由场景中 BackButton 节点自带的 Sprite 提供（颜色 45,74,122），
         // 不再运行时 addComponent(Graphics)：一个节点只能有一个渲染组件，
@@ -581,8 +589,9 @@ export class Debug extends Component {
 
     /**
      * 创建宇宙预览专用透视相机（初始禁用）：
-     * 场景主相机为正交投影，天空盒在其下不渲染；宇宙 tab 切换到本相机查看天空盒。
-     * visibility 与主相机一致（UI_2D + DEFAULT 等），保证大 tag / 宇宙按钮 / 状态栏照常显示。
+     * 场景主相机为正交投影，天空盒在其下不渲染；宇宙 tab 由本相机画天空盒。
+     * visibility 仅含 3D 模型层（不画 UI）——UI 由主相机以 DONT_CLEAR 叠加绘制，
+     * 因为 UI_2D 层按钮在透视相机下无法正常渲染。
      */
     private createSkyboxCamera(): void {
         const camNode = new Node('SkyboxCamera');
@@ -594,7 +603,7 @@ export class Debug extends Component {
         cam.near = 0.1;
         cam.far = 2000;
         cam.clearFlags = Camera.ClearFlag.SKYBOX;
-        cam.visibility = this.mainCamera?.visibility ?? 4294967295;
+        cam.visibility = MODEL_LAYER;
         camNode.active = false;
         // 挂场景根（与主相机平级）：Debug 组件宿主是 Canvas，相机不应挂 UI 画布下
         this.node.scene.addChild(camNode);
@@ -649,9 +658,26 @@ export class Debug extends Component {
         if (this.cosmosBar) this.cosmosBar.active = index === 1;
         // 宇宙预览时隐藏模型（纯宇宙背景），切回时恢复
         if (this.modelRoot) this.modelRoot.active = index === 0;
-        // 相机切换：宇宙 tab 用透视相机（天空盒仅在透视相机下渲染），模型 tab 恢复正交主相机
-        if (this.mainCamera) this.mainCamera.node.active = index === 0;
-        if (this.skyboxCamera) this.skyboxCamera.node.active = index === 1;
+        // 相机分工：
+        // 宇宙 tab —— SkyboxCamera（透视，priority 0）画天空盒；主相机（正交）保持激活但
+        //   只画 UI_2D 层、DONT_CLEAR 不清屏、priority 1 后画，按钮/状态栏叠加在星空之上。
+        //   （UI_2D 层在透视相机下无法渲染，所以 UI 必须交给正交主相机）
+        // 模型 tab —— 主相机还原全屏渲染（3D + UI + 清屏），SkyboxCamera 停用。
+        if (index === 1) {
+            if (this.skyboxCamera) this.skyboxCamera.node.active = true;
+            if (this.mainCamera) {
+                this.mainCamera.visibility = UI_LAYER;
+                this.mainCamera.clearFlags = Camera.ClearFlag.DONT_CLEAR;
+                this.mainCamera.priority = 1;
+            }
+        } else {
+            if (this.mainCamera) {
+                this.mainCamera.visibility = this.mainCameraOrig.visibility;
+                this.mainCamera.clearFlags = this.mainCameraOrig.clearFlags;
+                this.mainCamera.priority = this.mainCameraOrig.priority;
+            }
+            if (this.skyboxCamera) this.skyboxCamera.node.active = false;
+        }
         // 大 tag 选中态（选中=primary 高亮，未选中=ghost 置暗）
         this.mainTabButtons.forEach((btn, i) => {
             const kind: TechButtonKind = i === index ? 'primary' : 'ghost';
