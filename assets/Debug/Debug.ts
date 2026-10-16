@@ -33,6 +33,7 @@ import {
     Rect,
     Material,
     tween,
+    EventTouch,
 } from 'cc';
 import { fadeIn, fadeOutThen } from '../Common/UIAnim';
 import { paintTechButton, TechButtonKind, techTextColor, TechText } from '../Common/TechUI';
@@ -261,6 +262,10 @@ const COSMOS_BTN_H = 52;
 const COSMOS_BTN_GAP = 14;
 /** 宇宙按钮行中心 Y（预览区中部） */
 const COSMOS_BAR_Y = 40;
+/** 宇宙预览拖动环视灵敏度（度/像素） */
+const SKYBOX_DRAG_SPEED = 0.35;
+/** 宇宙预览俯仰角限位（度，防止越过天顶翻转） */
+const SKYBOX_PITCH_LIMIT = 89;
 
 /**
  * Debug 调试场景控制器：模型预览 + 解体特效 + 引擎特效演示。
@@ -364,6 +369,14 @@ export class Debug extends Component {
     private mainCamera: Camera | null = null;
     /** 主相机原始 visibility / clearFlags / priority（宇宙 tab 下临时改为只画 UI，切回时还原） */
     private mainCameraOrig = { visibility: 0, clearFlags: 0, priority: 0 };
+    /** 宇宙预览拖动环视：是否拖动中 */
+    private skyboxDragging = false;
+    /** 宇宙预览拖动环视：上一帧触摸点（画布坐标） */
+    private skyboxLastX = 0;
+    private skyboxLastY = 0;
+    /** 宇宙预览相机朝向：偏航 yaw（绕 Y）/ 俯仰 pitch（绕 X），单位度；俯仰限位 ±89 防翻转 */
+    private skyboxYaw = 0;
+    private skyboxPitch = 0;
     /** 当前引擎特效演示类型（与解体特效互斥，共用 fxRunning） */
     private engineFx: EngineFxKind | null = null;
     /** 引擎特效节点列表（结束统一清理） */
@@ -396,6 +409,11 @@ export class Debug extends Component {
         this.createEffectBar();
         // 顶层大 tag（模型预览/宇宙预览）与宇宙切换面板；宇宙预览无预加载，按需加载贴图
         this.createMainTabs();
+        // 宇宙预览拖动环视：画布上拖动旋转天空盒相机（仅宇宙 tab 生效）
+        this.node.on(Node.EventType.TOUCH_START, this.onSkyboxTouchStart, this);
+        this.node.on(Node.EventType.TOUCH_MOVE, this.onSkyboxTouchMove, this);
+        this.node.on(Node.EventType.TOUCH_END, this.onSkyboxTouchEnd, this);
+        this.node.on(Node.EventType.TOUCH_CANCEL, this.onSkyboxTouchEnd, this);
         this.loadModels();
     }
 
@@ -712,6 +730,34 @@ export class Debug extends Component {
             const l = btn.getChildByName('Label')?.getComponent(Label);
             if (l) l.color = techTextColor(kind);
         });
+    }
+
+    /** 宇宙预览拖动环视：记录拖动起点（仅宇宙 tab 生效；模型 tab 不拦截触摸） */
+    private onSkyboxTouchStart(e: EventTouch): void {
+        if (this.mainTab !== 1) return;
+        this.skyboxDragging = true;
+        this.skyboxLastX = e.getLocationX();
+        this.skyboxLastY = e.getLocationY();
+    }
+
+    /**
+     * 宇宙预览拖动环视：按拖动增量旋转透视相机（水平→偏航，垂直→俯仰），
+     * 俯仰限位 ±89° 防止越过天顶翻转；用于查看宇宙盒六面拼接情况。
+     */
+    private onSkyboxTouchMove(e: EventTouch): void {
+        if (!this.skyboxDragging || this.mainTab !== 1 || !this.skyboxCamera) return;
+        const dx = e.getLocationX() - this.skyboxLastX;
+        const dy = e.getLocationY() - this.skyboxLastY;
+        this.skyboxLastX = e.getLocationX();
+        this.skyboxLastY = e.getLocationY();
+        this.skyboxYaw -= dx * SKYBOX_DRAG_SPEED;
+        this.skyboxPitch = Math.max(-SKYBOX_PITCH_LIMIT, Math.min(SKYBOX_PITCH_LIMIT, this.skyboxPitch - dy * SKYBOX_DRAG_SPEED));
+        this.skyboxCamera.node.setRotationFromEuler(this.skyboxPitch, this.skyboxYaw, 0);
+    }
+
+    /** 宇宙预览拖动环视：结束/取消拖动 */
+    private onSkyboxTouchEnd(): void {
+        this.skyboxDragging = false;
     }
 
     /** 创建单个特效按钮（科技风背景 + 文字，返回按钮节点） */
