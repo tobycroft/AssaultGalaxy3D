@@ -354,6 +354,14 @@ export class Debug extends Component {
     private cosmosLoaded = false;
     /** 当前宇宙目录（db:// URL，按钮选中态判断用） */
     private cosmosDir = COSMOS_LIST[0].dir;
+    /**
+     * 宇宙预览专用透视相机：Cocos 天空盒只在透视（PERSPECTIVE）相机下渲染，
+     * 场景主相机是正交（ORTHO，供 2D UI + 3D 模型预览共用），看不见天空盒。
+     * 因此宇宙 tab 下临时切换到此相机，切回模型 tab 时恢复主相机。
+     */
+    private skyboxCamera: Camera | null = null;
+    /** 场景主相机引用（宇宙 tab 下临时禁用，切回模型预览恢复） */
+    private mainCamera: Camera | null = null;
     /** 当前引擎特效演示类型（与解体特效互斥，共用 fxRunning） */
     private engineFx: EngineFxKind | null = null;
     /** 引擎特效节点列表（结束统一清理） */
@@ -412,6 +420,10 @@ export class Debug extends Component {
         const canvas = this.node;
         this.statusLabel = canvas.getChildByName('StatusLabel')?.getComponent(Label) ?? null;
         this.modelButtonContainer = canvas.getChildByName('ModelButtons') ?? null;
+        // 场景主相机（正交，供模型预览 tab 使用；宇宙 tab 下临时禁用）。
+        // 注意：Debug 组件挂在 Canvas 上，Camera 是 Canvas 的兄弟节点（场景根下），
+        // 不能从 this.node 向下找，要从场景根找。
+        this.mainCamera = this.node.scene.getChildByName('Camera')?.getComponent(Camera) ?? null;
 
         // 返回按钮背景由场景中 BackButton 节点自带的 Sprite 提供（颜色 45,74,122），
         // 不再运行时 addComponent(Graphics)：一个节点只能有一个渲染组件，
@@ -561,9 +573,32 @@ export class Debug extends Component {
             this.mainTabButtons.push(btn);
         });
 
+        this.createSkyboxCamera();
         this.createCosmosBar();
         // 默认模型预览 tab（大 tag 选中态在此统一初始化）
         this.switchMainTab(0);
+    }
+
+    /**
+     * 创建宇宙预览专用透视相机（初始禁用）：
+     * 场景主相机为正交投影，天空盒在其下不渲染；宇宙 tab 切换到本相机查看天空盒。
+     * visibility 与主相机一致（UI_2D + DEFAULT 等），保证大 tag / 宇宙按钮 / 状态栏照常显示。
+     */
+    private createSkyboxCamera(): void {
+        const camNode = new Node('SkyboxCamera');
+        camNode.layer = MODEL_LAYER;
+        camNode.setPosition(0, 0, 0);
+        const cam = camNode.addComponent(Camera);
+        cam.projection = Camera.ProjectionType.PERSPECTIVE;
+        cam.fov = 60;
+        cam.near = 0.1;
+        cam.far = 2000;
+        cam.clearFlags = Camera.ClearFlag.SKYBOX;
+        cam.visibility = this.mainCamera?.visibility ?? 4294967295;
+        camNode.active = false;
+        // 挂场景根（与主相机平级）：Debug 组件宿主是 Canvas，相机不应挂 UI 画布下
+        this.node.scene.addChild(camNode);
+        this.skyboxCamera = cam;
     }
 
     /** 创建宇宙预览面板：一排宇宙切换按钮（点击即切换天空盒，无预加载） */
@@ -614,6 +649,9 @@ export class Debug extends Component {
         if (this.cosmosBar) this.cosmosBar.active = index === 1;
         // 宇宙预览时隐藏模型（纯宇宙背景），切回时恢复
         if (this.modelRoot) this.modelRoot.active = index === 0;
+        // 相机切换：宇宙 tab 用透视相机（天空盒仅在透视相机下渲染），模型 tab 恢复正交主相机
+        if (this.mainCamera) this.mainCamera.node.active = index === 0;
+        if (this.skyboxCamera) this.skyboxCamera.node.active = index === 1;
         // 大 tag 选中态（选中=primary 高亮，未选中=ghost 置暗）
         this.mainTabButtons.forEach((btn, i) => {
             const kind: TechButtonKind = i === index ? 'primary' : 'ghost';
