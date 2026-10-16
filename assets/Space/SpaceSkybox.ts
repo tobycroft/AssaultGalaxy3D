@@ -1,28 +1,23 @@
-import { _decorator, Component } from 'cc';
-import { applyCosmosSkybox } from './CosmosCatalog';
+import { _decorator, Component, warn } from 'cc';
+import { applyCosmosSkybox, findCosmos } from './CosmosCatalog';
 
 const { ccclass, property } = _decorator;
 
 /**
  * 宇宙天空盒组件：把一套六面贴图（默认 cosmos_default）在运行时组装成 TextureCube，
  * 并挂到场景 globals.skybox 作为宇宙背景盒。
- * 任意场景挂上本组件即可获得整套宇宙背景；把 skyboxDir 换成 cosmos_green 等目录
- * 即可整体切换背景（目录下须含 <前缀>_right/left/top/bottom/front/back 六张贴图，
- * 前缀留空时按目录名推断：cosmos_default → default，cosmos_green → green）。
+ * 任意场景挂上本组件即可获得整套宇宙背景；把 skyboxDir 换成已登记的其他宇宙目录
+ * （见 CosmosCatalog.COSMOS_LIST）即可整体切换背景。
  *
- * 组装逻辑与 Debug 宇宙预览面板共用 CosmosCatalog.applyCosmosSkybox。
+ * 组装逻辑与 Debug 宇宙预览面板共用 CosmosCatalog.applyCosmosSkybox（按 UUID 加载）。
  * 六面命名与朝向约定（TextureCube.FaceIndex）：
  *   right=0(+X) left=1(-X) top=2(+Y) bottom=3(-Y) front=4(+Z) back=5(-Z)
  */
 @ccclass('SpaceSkybox')
 export class SpaceSkybox extends Component {
-    /** 六面贴图目录（db:// 资源 URL），换目录即整套切换宇宙背景 */
+    /** 六面贴图目录（db:// 资源 URL），须已登记到 CosmosCatalog.COSMOS_LIST */
     @property
     skyboxDir = 'db://assets/Space/cosmos_default';
-
-    /** 六面贴图文件名前缀（留空则从目录名推断：cosmos_default → default） */
-    @property
-    facePrefix = '';
 
     /** 天空盒旋转角（度），微调银河带朝向 */
     @property
@@ -38,6 +33,11 @@ export class SpaceSkybox extends Component {
 
     /** 按当前属性组装并应用宇宙天空盒（换 skyboxDir 后也可手动调用刷新） */
     buildSkybox(): void {
-        applyCosmosSkybox(this.skyboxDir, this.facePrefix, this.rotationAngle, this.useIBL);
+        const def = findCosmos(this.skyboxDir);
+        if (!def) {
+            warn(`[SpaceSkybox] 天空盒目录未登记到 CosmosCatalog.COSMOS_LIST: ${this.skyboxDir}`);
+            return;
+        }
+        applyCosmosSkybox(def.faces, this.rotationAngle, this.useIBL);
     }
 }

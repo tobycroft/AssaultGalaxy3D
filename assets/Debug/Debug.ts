@@ -39,7 +39,7 @@ import { paintTechButton, TechButtonKind, techTextColor, TechText } from '../Com
 import { allShardCaps, FX_MAX_SHARDS, FX_SHATTER_CAPS, ShardBlob, ShardEntry, ShardStore } from '../Common/ShardStore';
 import { extractShards, modelFingerprint, readSubMeshes, resolveNodePath, SrcSubMesh } from '../Common/ShardCutter';
 import { BrustExplosion, BrustType, BRUST_TOTAL_LIFE } from '../Effect/Brust/BrustExplosion';
-import { COSMOS_LIST, applyCosmosSkybox } from '../Space/CosmosCatalog';
+import { COSMOS_LIST, CosmosDef, applyCosmosSkybox } from '../Space/CosmosCatalog';
 
 const { ccclass } = _decorator;
 
@@ -630,7 +630,7 @@ export class Debug extends Component {
             l.verticalAlign = Label.VerticalAlign.CENTER;
             btn.addChild(labNode);
 
-            btn.on(Node.EventType.TOUCH_END, () => this.switchCosmos(def.dir, def.label), this);
+            btn.on(Node.EventType.TOUCH_END, () => this.switchCosmos(def), this);
             bar.addChild(btn);
             this.cosmosButtons.push(btn);
         });
@@ -662,19 +662,19 @@ export class Debug extends Component {
         });
         // 宇宙 tab 首次打开：加载默认宇宙（此后切换只换贴图，无其他预加载）
         if (index === 1 && !this.cosmosLoaded) {
-            this.switchCosmos(COSMOS_LIST[0].dir, COSMOS_LIST[0].label);
+            this.switchCosmos(COSMOS_LIST[0]);
             return;
         }
         this.setStatus(index === 0 ? '模型预览' : '宇宙预览：点击按钮切换宇宙背景');
     }
 
-    /** 切换宇宙：异步加载对应目录六面贴图组装天空盒，并刷新按钮选中态 */
-    private switchCosmos(dir: string, label: string): void {
+    /** 切换宇宙：异步加载对应六面贴图（UUID）组装天空盒，并刷新按钮选中态 */
+    private switchCosmos(def: CosmosDef): void {
         this.cosmosLoaded = true;
-        this.cosmosDir = dir;
-        applyCosmosSkybox(dir);
+        this.cosmosDir = def.dir;
+        applyCosmosSkybox(def.faces);
         this.refreshCosmosButtons();
-        this.setStatus(`宇宙预览：${label}星系`);
+        this.setStatus(`宇宙预览：${def.label}星系`);
     }
 
     /** 刷新宇宙按钮选中态（当前宇宙=primary 高亮，其余=ghost 置暗） */
