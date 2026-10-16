@@ -37,6 +37,7 @@ export class Home extends Component {
         this.createNewsButton();
         this.playEnterAnim();
         this.createMusicToggle();
+        this.createSDebugButton();
         this.bindLoginEntry();
     }
 
@@ -115,6 +116,20 @@ export class Home extends Component {
         pressEffect(btn);
 
         canvas.addChild(btn);
+        fadeIn(btn, new Vec3(0, 30, 0), 0.5);
+    }
+
+    /**
+     * 场景调试入口（SDebug = Scene Debug）：右下角 BtnDebug（特效调试）左侧，
+     * 点击进入场景调试界面，用于跳转测试各开场/过场场景（如 1Opening）。
+     * 与 BtnDebug 同为 ghost 样式，不抢主菜单视觉。
+     */
+    private createSDebugButton(): void {
+        const canvas = this.node.parent;
+        if (!canvas || canvas.getChildByName('BtnSDebug')) return;
+        const btn = this.createEntryButton(canvas, 'BtnSDebug', 'SDebug', 280, -260, 220, 52,
+            (): void => this.switchScene('SDebug'), 'ghost');
+        pressEffect(btn);
         fadeIn(btn, new Vec3(0, 30, 0), 0.5);
     }
 
