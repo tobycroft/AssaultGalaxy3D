@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, Vec3, Color, tween, resources, Prefab, instantiate, geometry, MeshRenderer, ParticleSystem, Gradient, CurveRange, GradientRange, SpriteFrame, Texture2D, ImageAsset, Rect, warn, js } from 'cc';
+import { _decorator, Component, Node, Vec3, Color, tween, resources, Prefab, instantiate, geometry, MeshRenderer, ParticleSystem, Gradient, CurveRange, GradientRange, SpriteFrame, Texture2D, ImageAsset, Rect, warn, js, Material, builtinResMgr } from 'cc';
 
 const { ccclass } = _decorator;
 
@@ -190,18 +190,20 @@ export class Opening extends Component {
         flameRoot.setScale(1 / shipScale, 1 / shipScale, 1 / shipScale);
         ship.addChild(flameRoot);
 
+        // 参数单位是世界单位（flameRoot 世界缩放为 1），飞船恒为 380 单位，
+        // 故尾焰宽度取船体 12%~18%、焰长取 0.7~0.9 倍船体
         this.createFlameEmitter3D(flameRoot, 'FlameCore', {
             maxParticles: 200,
             startLifetime: 0.8,
             startLifetimeVar: 0.3,
-            startSpeed: 25,
-            startSpeedVar: 8,
-            startSize: 1.8,
-            startSizeVar: 0.6,
+            startSpeed: 300,
+            startSpeedVar: 90,
+            startSize: 45,
+            startSizeVar: 15,
             endSizeRatio: 0.15,
             emissionRate: 180,
             coneAngle: 8,
-            coneRadius: 0.15,
+            coneRadius: 8,
             startColor: new Color(230, 245, 255, 255),
             endColor: new Color(80, 150, 255, 0),
         });
@@ -210,14 +212,14 @@ export class Opening extends Component {
             maxParticles: 250,
             startLifetime: 1.1,
             startLifetimeVar: 0.4,
-            startSpeed: 18,
-            startSpeedVar: 6,
-            startSize: 3.0,
-            startSizeVar: 1.0,
+            startSpeed: 220,
+            startSpeedVar: 70,
+            startSize: 70,
+            startSizeVar: 25,
             endSizeRatio: 0.1,
             emissionRate: 140,
             coneAngle: 18,
-            coneRadius: 0.25,
+            coneRadius: 16,
             startColor: new Color(255, 190, 90, 220),
             endColor: new Color(255, 70, 0, 0),
         });
@@ -246,21 +248,24 @@ export class Opening extends Component {
         ps.playOnAwake = true;
         ps.capacity = cfg.maxParticles;
 
-        ps.startLifetime.mode = 1;
+        // CurveRange.Mode: Constant=0, Curve=1, TwoCurves=2, TwoConstants=3
+        // constantMin/constantMax 只在 TwoConstants(3) 下生效；误用 1(Curve) 时
+        // 实际取默认 spline 的常数 1.0，粒子尺寸/速度/寿命全部变成 1，尾焰不可见
+        ps.startLifetime.mode = 3;
         ps.startLifetime.constantMin = cfg.startLifetime;
         ps.startLifetime.constantMax = cfg.startLifetime + cfg.startLifetimeVar;
 
-        ps.startSpeed.mode = 1;
+        ps.startSpeed.mode = 3;
         ps.startSpeed.constantMin = cfg.startSpeed;
         ps.startSpeed.constantMax = cfg.startSpeed + cfg.startSpeedVar;
 
-        ps.startSizeX.mode = 1;
+        ps.startSizeX.mode = 3;
         ps.startSizeX.constantMin = cfg.startSize;
         ps.startSizeX.constantMax = cfg.startSize + cfg.startSizeVar;
-        ps.startSizeY.mode = 1;
+        ps.startSizeY.mode = 3;
         ps.startSizeY.constantMin = cfg.startSize;
         ps.startSizeY.constantMax = cfg.startSize + cfg.startSizeVar;
-        ps.startSizeZ.mode = 1;
+        ps.startSizeZ.mode = 3;
         ps.startSizeZ.constantMin = cfg.startSize;
         ps.startSizeZ.constantMax = cfg.startSize + cfg.startSizeVar;
 
@@ -312,20 +317,41 @@ export class Opening extends Component {
         ps.renderer.velocityScale = 0.5;
         ps.renderer.lengthScale = 1.5;
 
-        const frame = Opening.getGlowFrame();
-        if (frame) {
-            ps.renderer.mainTexture = frame.texture as Texture2D;
+        // renderer.mainTexture 的 setter 是无效操作（_mainTexture 从不被渲染器读取），
+        // 贴图必须挂在材质的 mainTexture 属性上；材质需在 onLoad 前挂好
+        const mat = Opening.getFlameMaterial();
+        if (mat) {
+            ps.setSharedMaterial(mat, 0);
         }
 
         parent.addChild(node);
         ps.play();
-        warn('[Opening] createFlameEmitter3D', name, 'frame=', !!frame);
+        warn('[Opening] createFlameEmitter3D', name, 'mat=', !!mat);
     }
 
     /** 按 ccclass 注册名构造引擎内部粒子模块实例（3.8 运行时模块 getter 不自建实例） */
     private static newParticleModule<T>(className: string): T | null {
         const ctor = js.getClassByName(className) as (new () => T) | undefined;
         return ctor ? new ctor() : null;
+    }
+
+    private static _flameMaterial: Material | null = null;
+
+    /**
+     * 复制内置默认粒子材质并换上辉光贴图（两个发射器共用一份）。
+     * 渲染器实际从 sharedMaterial 的 mainTexture 属性读贴图，
+     * 不设则用内置 grey 纯色方块，尾焰会是一堆灰方块。
+     */
+    private static getFlameMaterial(): Material | null {
+        if (this._flameMaterial) return this._flameMaterial;
+        const frame = this.getGlowFrame();
+        const proto = builtinResMgr.get<Material>('default-particle-material');
+        if (!frame || !proto) return null;
+        const mat = new Material();
+        mat.copy(proto);
+        mat.setProperty('mainTexture', frame.texture);
+        this._flameMaterial = mat;
+        return mat;
     }
 
     private static _glowFrame: SpriteFrame | null = null;
