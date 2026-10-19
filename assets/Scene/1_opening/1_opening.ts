@@ -5,16 +5,13 @@ const { ccclass } = _decorator;
 const SHIP_DIR = 'Model/spaceship';
 const TARGET_SHIP_SIZE = 380;
 
-const DOLLY_DURATION = 4.0;
-const ORBIT_DURATION = 5.0;
-const FINAL_DURATION = 2.5;
+const DOLLY_DURATION = 8.0;
 const ORBIT_EASING = 'cubicInOut';
 
 const SHIP_HALF_SIZE = TARGET_SHIP_SIZE / 2;
 
 const Z_DEEP_SPACE = SHIP_HALF_SIZE * 6;
-const Z_APPROACH = SHIP_HALF_SIZE * 1.8;
-const Z_TAIL = SHIP_HALF_SIZE * 1.2;
+const Z_TAIL = SHIP_HALF_SIZE * 2.4;
 
 @ccclass('Opening')
 export class Opening extends Component {
@@ -121,58 +118,26 @@ export class Opening extends Component {
     private startCameraAnimation(): void {
         if (!this.cameraRig || !this.cameraNode) return;
 
-        this.setCameraToDeepSpace();
-
-        const startPos = new Vec3(0, SHIP_HALF_SIZE, Z_DEEP_SPACE);
-        const endPos = new Vec3(0, SHIP_HALF_SIZE * 0.3, Z_APPROACH);
-
-        this.tweenCameraTo(startPos, endPos, DOLLY_DURATION, () => {
-            this.startOrbit();
-        });
-    }
-
-    private startOrbit(): void {
-        if (!this.cameraRig || !this.cameraNode) return;
-
-        this.cameraNode.setPosition(0, SHIP_HALF_SIZE * 0.3, Z_APPROACH);
+        this.cameraRig.setPosition(0, 0, 0);
+        this.cameraRig.setRotationFromEuler(0, 0, 0);
+        this.cameraNode.setPosition(0, SHIP_HALF_SIZE, Z_DEEP_SPACE);
         this.cameraNode.lookAt(Vec3.ZERO);
 
+        const startY = SHIP_HALF_SIZE;
+        const endY = SHIP_HALF_SIZE * 0.15;
+        const startZ = Z_DEEP_SPACE;
+        const endZ = Z_TAIL;
+
         tween(this.cameraRig)
-            .to(ORBIT_DURATION, { eulerAngles: new Vec3(0, 360, 0) }, {
+            .to(DOLLY_DURATION, { eulerAngles: new Vec3(0, 180, 0) }, {
                 easing: ORBIT_EASING,
-                onUpdate: () => {
+                onUpdate: (_target: Node, ratio: number) => {
+                    const z = startZ + (endZ - startZ) * ratio;
+                    const y = startY + (endY - startY) * ratio;
+                    this.cameraNode!.setPosition(0, y, z);
                     this.cameraNode!.lookAt(Vec3.ZERO);
                 },
             })
-            .call(() => this.finalPosition())
             .start();
-    }
-
-    private finalPosition(): void {
-        if (!this.cameraNode) return;
-
-        const currentPos = this.cameraNode.position.clone();
-        const endPos = new Vec3(0, SHIP_HALF_SIZE * 0.15, Z_TAIL);
-        this.tweenCameraTo(currentPos, endPos, FINAL_DURATION);
-    }
-
-    private tweenCameraTo(startPos: Vec3, endPos: Vec3, duration: number, onComplete?: () => void): void {
-        if (!this.cameraNode) return;
-
-        this.cameraNode.setPosition(startPos);
-        this.cameraNode.lookAt(Vec3.ZERO);
-
-        const tw = tween(this.cameraNode)
-            .to(duration, { position: endPos.clone() }, {
-                easing: ORBIT_EASING,
-                onUpdate: () => {
-                    this.cameraNode!.lookAt(Vec3.ZERO);
-                },
-            });
-
-        if (onComplete) {
-            tw.call(onComplete);
-        }
-        tw.start();
     }
 }
