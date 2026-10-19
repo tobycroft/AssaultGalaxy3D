@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, Vec3, Vec2, Color, tween, resources, Prefab, instantiate, geometry, MeshRenderer, ParticleSystem2D, UITransform, SpriteFrame, Texture2D, Rect, assetManager, gfx, warn } from 'cc';
+import { _decorator, Component, Node, Vec3, Vec2, Color, tween, resources, Prefab, instantiate, geometry, MeshRenderer, ParticleSystem2D, UITransform, SpriteFrame, Texture2D, ImageAsset, Rect, gfx, warn } from 'cc';
 
 const { ccclass } = _decorator;
 
@@ -14,8 +14,6 @@ const Z_DEEP_SPACE = SHIP_HALF_SIZE * 100;
 const Z_TAIL = SHIP_HALF_SIZE * 2.4;
 
 const ANGLE_TAN = Math.tan(15 * Math.PI / 180);
-
-const DEFAULT_SPRITE_UUID = '20835ba4-6145-4fbc-a58a-051ce700aa3e';
 const UI_LAYER = 33554432;
 
 @ccclass('Opening')
@@ -211,6 +209,37 @@ export class Opening extends Component {
         });
     }
 
+    private static _glowFrame: SpriteFrame | null = null;
+
+    private static getGlowFrame(): SpriteFrame | null {
+        if (this._glowFrame) return this._glowFrame;
+        const size = 64;
+        const doc = (globalThis as { document?: Document }).document;
+        if (!doc) return null;
+        const canvas = doc.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        const half = size / 2;
+        const grad = ctx.createRadialGradient(half, half, 0, half, half, half);
+        grad.addColorStop(0.0, 'rgba(255,255,255,1)');
+        grad.addColorStop(0.25, 'rgba(255,255,255,0.95)');
+        grad.addColorStop(0.5, 'rgba(255,255,255,0.45)');
+        grad.addColorStop(1.0, 'rgba(255,255,255,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, size, size);
+        const img = new ImageAsset(canvas);
+        const tex = new Texture2D();
+        tex.image = img;
+        const sf = new SpriteFrame();
+        sf.texture = tex;
+        sf.rect = new Rect(0, 0, size, size);
+        sf.packable = false;
+        this._glowFrame = sf;
+        return sf;
+    }
+
     private spawnFlameEmitter(name: string, parent: Node, cfg: {
         totalParticles: number;
         life: number; lifeVar: number;
@@ -257,16 +286,9 @@ export class Opening extends Component {
 
         parent.addChild(n);
 
-        assetManager.loadAny({ uuid: DEFAULT_SPRITE_UUID }, (err, img) => {
-            if (err || !img || !n.isValid) return;
-            const tex = new Texture2D();
-            tex.image = img as any;
-            const sf = new SpriteFrame();
-            sf.texture = tex;
-            sf.rect = new Rect(0, 0, tex.width, tex.height);
-            sf.packable = false;
-            ps.spriteFrame = sf;
-            ps.resetSystem();
-        });
+        const frame = Opening.getGlowFrame();
+        ps.spriteFrame = frame;
+        ps.resetSystem();
+        warn('[Opening] spawnFlameEmitter', name, 'frame=', !!frame, 'node=', n.isValid);
     }
 }
