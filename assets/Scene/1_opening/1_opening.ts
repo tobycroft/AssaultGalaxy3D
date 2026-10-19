@@ -2,7 +2,8 @@ import { _decorator, Component, Node, Vec3, tween, resources, Prefab, instantiat
 
 const { ccclass } = _decorator;
 
-const SHIP_PATH = 'Model/spaceship/default_hq';
+const SHIP_DIR = 'Model/spaceship';
+const SHIP_NAME = 'default_hq';
 const TARGET_SHIP_SIZE = 100;
 const DOLLY_FAR = 500;
 const DOLLY_NEAR = 50;
@@ -34,7 +35,13 @@ export class Opening extends Component {
     }
 
     private loadShip(): void {
-        resources.load(SHIP_PATH, Prefab, (err, prefab) => {
+        const infos = resources.getDirWithPath(SHIP_DIR, Prefab);
+        const info = infos?.find((i) => i.path.endsWith(SHIP_NAME));
+        if (!info) {
+            warn('[Opening] Ship model not found in resources: ' + SHIP_DIR + '/' + SHIP_NAME);
+            return;
+        }
+        resources.load(info.path, Prefab, (err, prefab) => {
             if (err || !prefab) {
                 warn('[Opening] Failed to load ship model:', err);
                 return;
