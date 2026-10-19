@@ -4,11 +4,17 @@ const { ccclass } = _decorator;
 
 const SHIP_PREFAB_UUID = '47c67489-b792-4bb0-b34a-98df349e2bcf@f579f';
 const TARGET_SHIP_SIZE = 100;
-const DOLLY_FAR = 500;
-const DOLLY_NEAR = 50;
-const DOLLY_DURATION = 3.0;
-const ORBIT_DURATION = 4.0;
+
+// 动画参数
+const DOLLY_DURATION = 3.5;
+const ORBIT_DURATION = 5.0;
+const FINAL_DURATION = 2.0;
 const ORBIT_EASING = 'cubicInOut';
+
+// 相机关键位置（相对于 CameraRig）
+const POS_DEEP_SPACE = new Vec3(0, 300, 1200);   // 深空远处，俯视
+const POS_APPROACH = new Vec3(0, 60, 300);       // 靠近飞船，略高
+const POS_TAIL = new Vec3(0, 20, -80);           // 飞船尾部第三人称视角
 
 @ccclass('Opening')
 export class Opening extends Component {
@@ -81,31 +87,56 @@ export class Opening extends Component {
         ship.setPosition(-center.x * scale, -center.y * scale, -center.z * scale);
     }
 
+    /**
+     * 四段式运镜：
+     * 1. 深空远处（高角度俯视）→ 飞近飞船
+     * 2. 靠近后绕飞船 360° 环绕
+     * 3. 环绕结束后落到飞船尾部第三人称视角
+     */
     private startCameraAnimation(): void {
         if (!this.cameraRig || !this.cameraNode) return;
 
+        // 重置 rig
         this.cameraRig.setPosition(0, 0, 0);
         this.cameraRig.setRotationFromEuler(0, 0, 0);
-        this.cameraNode.setPosition(0, 0, DOLLY_FAR);
 
-        const camPos = this.cameraNode.position.clone();
-        camPos.z = DOLLY_NEAR;
+        // 起始：深空远处
+        this.cameraNode.setPosition(POS_DEEP_SPACE);
+        this.cameraNode.lookAt(Vec3.ZERO);
 
+        // 阶段一：从深空飞近飞船
         tween(this.cameraNode)
-            .to(DOLLY_DURATION, { position: camPos }, { easing: 'cubicInOut' })
-            .call(() => {
-                this.startOrbit();
+            .to(DOLLY_DURATION, { position: POS_APPROACH.clone() }, {
+                easing: ORBIT_EASING,
+                onUpdate: () => this.cameraNode!.lookAt(Vec3.ZERO),
             })
+            .call(() => this.startOrbit())
             .start();
     }
 
+    /** 阶段二：绕飞船 360° 环绕，相机始终注视飞船 */
     private startOrbit(): void {
-        if (!this.cameraRig) return;
-
-        const targetEuler = new Vec3(0, 360, 0);
+        if (!this.cameraRig || !this.cameraNode) return;
 
         tween(this.cameraRig)
-            .to(ORBIT_DURATION, { eulerAngles: targetEuler }, { easing: ORBIT_EASING })
+            .to(ORBIT_DURATION, { eulerAngles: new Vec3(0, 360, 0) }, {
+                easing: ORBIT_EASING,
+                onUpdate: () => this.cameraNode!.lookAt(Vec3.ZERO),
+            })
+            .call(() => this.finalPosition())
+            .start();
+    }
+
+    /** 阶段三：落到飞船尾部第三人称视角 */
+    private finalPosition(): void {
+        if (!this.cameraNode) return;
+
+        // rig 已转完 360°（等同于 0°），直接移动相机到尾部位置
+        tween(this.cameraNode)
+            .to(FINAL_DURATION, { position: POS_TAIL.clone() }, {
+                easing: ORBIT_EASING,
+                onUpdate: () => this.cameraNode!.lookAt(Vec3.ZERO),
+            })
             .start();
     }
 }
