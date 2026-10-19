@@ -25,7 +25,13 @@ const BG_COLOR = new Color(10, 18, 32, 255);
  * name 为场景名（loadScene 用），label 为按钮展示名。
  */
 const SCENE_LIST: { name: string; label: string }[] = [
-    { name: '1_opening', label: '1_opening · 深空前线（开场运镜）' },
+    { name: '1_opening', label: '1_opening · 开场运镜' },
+    { name: 'Intro', label: 'Intro · 开场动画' },
+    { name: 'Login', label: 'Login · 登录' },
+    { name: 'Home', label: 'Home · 首页' },
+    { name: 'Hangar', label: 'Hangar · 机库' },
+    { name: 'Debug', label: 'Debug · 引擎特效调试' },
+    { name: 'Settings', label: 'Settings · 设置' },
 ];
 
 /**
@@ -60,9 +66,9 @@ export class SDebug extends Component {
                 'BtnGo_' + def.name,
                 def.label,
                 0,
-                60 - i * 96,
+                230 - i * 82,
                 560,
-                76,
+                64,
                 (): void => this.gotoScene(def.name),
                 'primary',
             );
@@ -74,7 +80,7 @@ export class SDebug extends Component {
             'BtnBackHome',
             '返回首页',
             0,
-            -290,
+            -340,
             240,
             52,
             (): void => this.gotoScene('Home'),
