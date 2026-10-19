@@ -1,8 +1,9 @@
-import { _decorator, Component, Node, Vec3, tween, resources, Prefab, instantiate, warn } from 'cc';
+import { _decorator, Component, Node, Vec3, tween, resources, Prefab, instantiate, geometry, MeshRenderer, warn } from 'cc';
 
 const { ccclass } = _decorator;
 
 const SHIP_PATH = 'Model/spaceship/default_hq';
+const TARGET_SHIP_SIZE = 100;
 const DOLLY_FAR = 500;
 const DOLLY_NEAR = 50;
 const DOLLY_DURATION = 3.0;
@@ -41,8 +42,43 @@ export class Opening extends Component {
             const ship = instantiate(prefab);
             ship.setPosition(0, 0, 0);
             this.node.addChild(ship);
-            this.startCameraAnimation();
+            this.scheduleOnce(() => {
+                this.fitShip(ship);
+                this.startCameraAnimation();
+            }, 0);
         });
+    }
+
+    private fitShip(ship: Node): void {
+        let minX = Infinity, minY = Infinity, minZ = Infinity;
+        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+
+        const aabb = new geometry.AABB();
+        const renderers = ship.getComponentsInChildren(MeshRenderer);
+        for (const r of renderers) {
+            const m = r.model;
+            if (!m || !m.modelBounds) continue;
+            geometry.AABB.transform(aabb, m.modelBounds, r.node.worldMatrix);
+            const c = aabb.center;
+            const h = aabb.halfExtents;
+            minX = Math.min(minX, c.x - h.x);
+            maxX = Math.max(maxX, c.x + h.x);
+            minY = Math.min(minY, c.y - h.y);
+            maxY = Math.max(maxY, c.y + h.y);
+            minZ = Math.min(minZ, c.z - h.z);
+            maxZ = Math.max(maxZ, c.z + h.z);
+        }
+        if (!isFinite(minX)) {
+            warn('[Opening] No mesh bounds found for ship model');
+            return;
+        }
+
+        const center = new Vec3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+        const maxDim = Math.max(maxX - minX, maxY - minY, maxZ - minZ) || 1;
+        const scale = TARGET_SHIP_SIZE / maxDim;
+
+        ship.setScale(scale, scale, scale);
+        ship.setPosition(-center.x * scale, -center.y * scale, -center.z * scale);
     }
 
     private startCameraAnimation(): void {
