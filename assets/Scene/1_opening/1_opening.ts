@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, Vec3, Vec2, Color, tween, resources, Prefab, instantiate, geometry, MeshRenderer, ParticleSystem2D, UITransform, SpriteFrame, Texture2D, ImageAsset, Rect, Canvas, gfx, warn } from 'cc';
+import { _decorator, Component, Node, Vec3, Color, tween, resources, Prefab, instantiate, geometry, MeshRenderer, ParticleSystem, Gradient, SpriteFrame, Texture2D, ImageAsset, Rect, warn } from 'cc';
 
 const { ccclass } = _decorator;
 
@@ -14,7 +14,6 @@ const Z_DEEP_SPACE = SHIP_HALF_SIZE * 100;
 const Z_TAIL = SHIP_HALF_SIZE * 2.4;
 
 const ANGLE_TAN = Math.tan(15 * Math.PI / 180);
-const UI_LAYER = 33554432;
 
 @ccclass('Opening')
 export class Opening extends Component {
@@ -165,58 +164,118 @@ export class Opening extends Component {
         const flameLocalZ = (tailZ - 20) / shipScale;
 
         const flameRoot = new Node('EngineFlame');
-        flameRoot.layer = UI_LAYER;
         flameRoot.setPosition(0, 0, flameLocalZ);
         flameRoot.setScale(1 / shipScale, 1 / shipScale, 1 / shipScale);
         ship.addChild(flameRoot);
 
-        const canvas = flameRoot.addComponent(Canvas);
+        this.createFlameEmitter3D(flameRoot, 'FlameCore', {
+            maxParticles: 200,
+            startLifetime: 0.8,
+            startLifetimeVar: 0.3,
+            startSpeed: 25,
+            startSpeedVar: 8,
+            startSize: 1.8,
+            startSizeVar: 0.6,
+            endSizeRatio: 0.15,
+            emissionRate: 180,
+            coneAngle: 8,
+            coneRadius: 0.15,
+            startColor: new Color(230, 245, 255, 255),
+            endColor: new Color(80, 150, 255, 0),
+        });
 
-        const crossAngles = [0, 60, 120];
-        for (const rotY of crossAngles) {
-            const slice = new Node('FlameSlice_' + rotY);
-            slice.layer = UI_LAYER;
-            slice.setRotationFromEuler(-90, rotY, 0);
-            flameRoot.addChild(slice);
+        this.createFlameEmitter3D(flameRoot, 'FlameOuter', {
+            maxParticles: 250,
+            startLifetime: 1.1,
+            startLifetimeVar: 0.4,
+            startSpeed: 18,
+            startSpeedVar: 6,
+            startSize: 3.0,
+            startSizeVar: 1.0,
+            endSizeRatio: 0.1,
+            emissionRate: 140,
+            coneAngle: 18,
+            coneRadius: 0.25,
+            startColor: new Color(255, 190, 90, 220),
+            endColor: new Color(255, 70, 0, 0),
+        });
+    }
 
-            this.spawnFlameEmitter('Core_' + rotY, slice, {
-                totalParticles: 120,
-                life: 0.8,
-                lifeVar: 0.3,
-                startSize: 60,
-                startSizeVar: 20,
-                endSize: 15,
-                endSizeVar: 8,
-                speed: 280,
-                speedVar: 80,
-                angle: 270,
-                angleVar: 12,
-                emissionRate: 150,
-                startColor: new Color(220, 240, 255, 255),
-                startColorVar: new Color(30, 15, 0, 0),
-                endColor: new Color(100, 160, 255, 0),
-                endColorVar: new Color(0, 0, 0, 0),
-            });
+    private createFlameEmitter3D(parent: Node, name: string, cfg: {
+        maxParticles: number;
+        startLifetime: number; startLifetimeVar: number;
+        startSpeed: number; startSpeedVar: number;
+        startSize: number; startSizeVar: number;
+        endSizeRatio: number;
+        emissionRate: number;
+        coneAngle: number;
+        coneRadius: number;
+        startColor: Color;
+        endColor: Color;
+    }): void {
+        const node = new Node(name);
+        parent.addChild(node);
 
-            this.spawnFlameEmitter('Outer_' + rotY, slice, {
-                totalParticles: 160,
-                life: 1.1,
-                lifeVar: 0.4,
-                startSize: 90,
-                startSizeVar: 30,
-                endSize: 25,
-                endSizeVar: 12,
-                speed: 200,
-                speedVar: 60,
-                angle: 270,
-                angleVar: 25,
-                emissionRate: 120,
-                startColor: new Color(255, 180, 80, 220),
-                startColorVar: new Color(30, 30, 0, 0),
-                endColor: new Color(255, 80, 0, 0),
-                endColorVar: new Color(0, 0, 0, 0),
-            });
+        const ps = node.addComponent(ParticleSystem);
+
+        ps.duration = -1;
+        ps.loop = true;
+        ps.playOnAwake = true;
+        ps.capacity = cfg.maxParticles;
+
+        ps.startLifetime.mode = 1;
+        ps.startLifetime.constantMin = cfg.startLifetime;
+        ps.startLifetime.constantMax = cfg.startLifetime + cfg.startLifetimeVar;
+
+        ps.startSpeed.mode = 1;
+        ps.startSpeed.constantMin = cfg.startSpeed;
+        ps.startSpeed.constantMax = cfg.startSpeed + cfg.startSpeedVar;
+
+        ps.startSizeX.mode = 1;
+        ps.startSizeX.constantMin = cfg.startSize;
+        ps.startSizeX.constantMax = cfg.startSize + cfg.startSizeVar;
+        ps.startSizeY.mode = 1;
+        ps.startSizeY.constantMin = cfg.startSize;
+        ps.startSizeY.constantMax = cfg.startSize + cfg.startSizeVar;
+        ps.startSizeZ.mode = 1;
+        ps.startSizeZ.constantMin = cfg.startSize;
+        ps.startSizeZ.constantMax = cfg.startSize + cfg.startSizeVar;
+
+        ps.startColor.mode = 0;
+        ps.startColor.color = cfg.startColor;
+
+        ps.rateOverTime.mode = 0;
+        ps.rateOverTime.constant = cfg.emissionRate;
+
+        ps.shapeModule.shapeType = 2;
+        ps.shapeModule.radius = cfg.coneRadius;
+        ps.shapeModule.angle = cfg.coneAngle;
+
+        ps.colorOverLifetimeModule.enable = true;
+        ps.colorOverLifetimeModule.color.mode = 1;
+        const gradient = new Gradient();
+        const c0: any = { color: cfg.startColor.clone(), time: 0 };
+        const c1: any = { color: cfg.endColor.clone(), time: 1 };
+        const a0: any = { alpha: cfg.startColor.a / 255, time: 0 };
+        const a1: any = { alpha: cfg.endColor.a / 255, time: 1 };
+        gradient.setKeys([c0, c1], [a0, a1]);
+        ps.colorOverLifetimeModule.color.gradient = gradient;
+
+        ps.sizeOvertimeModule.enable = true;
+        ps.sizeOvertimeModule.size.mode = 0;
+        ps.sizeOvertimeModule.size.constant = cfg.endSizeRatio;
+
+        ps.renderer.renderMode = 1;
+        ps.renderer.velocityScale = 0.5;
+        ps.renderer.lengthScale = 1.5;
+
+        const frame = Opening.getGlowFrame();
+        if (frame) {
+            ps.renderer.mainTexture = frame.texture as Texture2D;
         }
+
+        ps.play();
+        warn('[Opening] createFlameEmitter3D', name, 'frame=', !!frame);
     }
 
     private static _glowFrame: SpriteFrame | null = null;
@@ -248,57 +307,5 @@ export class Opening extends Component {
         sf.packable = false;
         this._glowFrame = sf;
         return sf;
-    }
-
-    private spawnFlameEmitter(name: string, parent: Node, cfg: {
-        totalParticles: number;
-        life: number; lifeVar: number;
-        startSize: number; startSizeVar: number;
-        endSize: number; endSizeVar: number;
-        speed: number; speedVar: number;
-        angle: number; angleVar: number;
-        emissionRate: number;
-        startColor: Color; startColorVar: Color;
-        endColor: Color; endColorVar: Color;
-    }): void {
-        const n = new Node(name);
-        n.layer = UI_LAYER;
-        n.addComponent(UITransform).setContentSize(10, 10);
-
-        const ps = n.addComponent(ParticleSystem2D);
-        ps.custom = true;
-        ps.playOnLoad = false;
-        ps.totalParticles = cfg.totalParticles;
-        ps.duration = -1;
-        ps.life = cfg.life;
-        ps.lifeVar = cfg.lifeVar;
-        ps.startSize = cfg.startSize;
-        ps.startSizeVar = cfg.startSizeVar;
-        ps.endSize = cfg.endSize;
-        ps.endSizeVar = cfg.endSizeVar;
-        ps.speed = cfg.speed;
-        ps.speedVar = cfg.speedVar;
-        ps.angle = cfg.angle;
-        ps.angleVar = cfg.angleVar;
-        ps.gravity = new Vec2(0, 0);
-        ps.emissionRate = cfg.emissionRate;
-        ps.positionType = 0;
-        ps.startColor = cfg.startColor;
-        ps.startColorVar = cfg.startColorVar;
-        ps.endColor = cfg.endColor;
-        ps.endColorVar = cfg.endColorVar;
-
-        const blend = ps as unknown as { srcBlendFactor: number; dstBlendFactor: number; depthTest: boolean; depthWrite: boolean };
-        blend.srcBlendFactor = gfx.BlendFactor.SRC_ALPHA;
-        blend.dstBlendFactor = gfx.BlendFactor.ONE;
-        blend.depthTest = false;
-        blend.depthWrite = false;
-
-        parent.addChild(n);
-
-        const frame = Opening.getGlowFrame();
-        ps.spriteFrame = frame;
-        ps.resetSystem();
-        warn('[Opening] spawnFlameEmitter', name, 'frame=', !!frame, 'node=', n.isValid);
     }
 }
