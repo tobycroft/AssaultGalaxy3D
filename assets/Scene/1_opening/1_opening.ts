@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, Vec3, Color, tween, resources, Prefab, instantiate, geometry, MeshRenderer, ParticleSystem, Gradient, SpriteFrame, Texture2D, ImageAsset, Rect, warn } from 'cc';
+import { _decorator, Component, Node, Vec3, Color, tween, resources, Prefab, instantiate, geometry, MeshRenderer, ParticleSystem, Gradient, CurveRange, GradientRange, SpriteFrame, Texture2D, ImageAsset, Rect, warn, js } from 'cc';
 
 const { ccclass } = _decorator;
 
@@ -14,6 +14,28 @@ const Z_DEEP_SPACE = SHIP_HALF_SIZE * 100;
 const Z_TAIL = SHIP_HALF_SIZE * 2.4;
 
 const ANGLE_TAN = Math.tan(15 * Math.PI / 180);
+
+/**
+ * 引擎内部粒子模块的最小字段约定。
+ * Cocos 3.8 未从 cc 导出这些模块类，且运行时（预览/构建）中 ParticleSystem 的
+ * shapeModule / colorOverLifetimeModule / sizeOvertimeModule getter 返回 null
+ * （仅编辑器内会懒创建实例），故按 ccclass 注册名手动 new 并经 setter 赋值。
+ */
+interface FlameShapeModule {
+    shapeType: number;
+    radius: number;
+    angle: number;
+}
+
+interface FlameColorModule {
+    enable: boolean;
+    color: GradientRange;
+}
+
+interface FlameSizeModule {
+    enable: boolean;
+    size: CurveRange;
+}
 
 @ccclass('Opening')
 export class Opening extends Component {
@@ -214,8 +236,9 @@ export class Opening extends Component {
         endColor: Color;
     }): void {
         const node = new Node(name);
-        parent.addChild(node);
-
+        // 先加组件、后挂父节点：节点未入活动场景时 onLoad 延迟到挂载时执行，
+        // 届时引擎 onLoad 会完成 renderer.onInit（登记已启用的动画模块）、
+        // shapeModule.onInit 与 bindModule（bindTarget），保证模块正确绑定
         const ps = node.addComponent(ParticleSystem);
 
         ps.duration = -1;
@@ -247,23 +270,43 @@ export class Opening extends Component {
         ps.rateOverTime.mode = 0;
         ps.rateOverTime.constant = cfg.emissionRate;
 
-        ps.shapeModule.shapeType = 2;
-        ps.shapeModule.radius = cfg.coneRadius;
-        ps.shapeModule.angle = cfg.coneAngle;
+        // 运行时（预览/构建）中模块 getter 返回 null，必须手动 new 并经 setter 赋值；
+        // 节点挂载后引擎 onLoad 会完成 onInit / bindTarget 绑定
+        const shape = Opening.newParticleModule<FlameShapeModule>('cc.ShapeModule');
+        if (shape) {
+            shape.shapeType = 2; // Cone
+            shape.radius = cfg.coneRadius;
+            shape.angle = cfg.coneAngle;
+            ps.shapeModule = shape as unknown as typeof ps.shapeModule;
+        } else {
+            warn('[Opening] cc.ShapeModule not found, flame shape skipped');
+        }
 
-        ps.colorOverLifetimeModule.enable = true;
-        ps.colorOverLifetimeModule.color.mode = 1;
-        const gradient = new Gradient();
-        const c0: any = { color: cfg.startColor.clone(), time: 0 };
-        const c1: any = { color: cfg.endColor.clone(), time: 1 };
-        const a0: any = { alpha: cfg.startColor.a / 255, time: 0 };
-        const a1: any = { alpha: cfg.endColor.a / 255, time: 1 };
-        gradient.setKeys([c0, c1], [a0, a1]);
-        ps.colorOverLifetimeModule.color.gradient = gradient;
+        const color = Opening.newParticleModule<FlameColorModule>('cc.ColorOvertimeModule');
+        if (color) {
+            color.enable = true;
+            color.color.mode = 1;
+            const gradient = new Gradient();
+            const c0: any = { color: cfg.startColor.clone(), time: 0 };
+            const c1: any = { color: cfg.endColor.clone(), time: 1 };
+            const a0: any = { alpha: cfg.startColor.a / 255, time: 0 };
+            const a1: any = { alpha: cfg.endColor.a / 255, time: 1 };
+            gradient.setKeys([c0, c1], [a0, a1]);
+            color.color.gradient = gradient;
+            ps.colorOverLifetimeModule = color as unknown as typeof ps.colorOverLifetimeModule;
+        } else {
+            warn('[Opening] cc.ColorOvertimeModule not found, flame color skipped');
+        }
 
-        ps.sizeOvertimeModule.enable = true;
-        ps.sizeOvertimeModule.size.mode = 0;
-        ps.sizeOvertimeModule.size.constant = cfg.endSizeRatio;
+        const size = Opening.newParticleModule<FlameSizeModule>('cc.SizeOvertimeModule');
+        if (size) {
+            size.enable = true;
+            size.size.mode = 0;
+            size.size.constant = cfg.endSizeRatio;
+            ps.sizeOvertimeModule = size as unknown as typeof ps.sizeOvertimeModule;
+        } else {
+            warn('[Opening] cc.SizeOvertimeModule not found, flame size skipped');
+        }
 
         ps.renderer.renderMode = 1;
         ps.renderer.velocityScale = 0.5;
@@ -274,8 +317,15 @@ export class Opening extends Component {
             ps.renderer.mainTexture = frame.texture as Texture2D;
         }
 
+        parent.addChild(node);
         ps.play();
         warn('[Opening] createFlameEmitter3D', name, 'frame=', !!frame);
+    }
+
+    /** 按 ccclass 注册名构造引擎内部粒子模块实例（3.8 运行时模块 getter 不自建实例） */
+    private static newParticleModule<T>(className: string): T | null {
+        const ctor = js.getClassByName(className) as (new () => T) | undefined;
+        return ctor ? new ctor() : null;
     }
 
     private static _glowFrame: SpriteFrame | null = null;
