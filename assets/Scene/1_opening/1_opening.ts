@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, Vec3, Vec2, Color, tween, resources, Prefab, instantiate, geometry, MeshRenderer, ParticleSystem2D, UITransform, SpriteFrame, Texture2D, ImageAsset, Rect, gfx, warn } from 'cc';
+import { _decorator, Component, Node, Vec3, Vec2, Color, tween, resources, Prefab, instantiate, geometry, MeshRenderer, ParticleSystem2D, UITransform, SpriteFrame, Texture2D, ImageAsset, Rect, Canvas, Graphics, gfx, warn } from 'cc';
 
 const { ccclass } = _decorator;
 
@@ -170,18 +170,21 @@ export class Opening extends Component {
         flameRoot.setScale(1 / shipScale, 1 / shipScale, 1 / shipScale);
         ship.addChild(flameRoot);
 
+        const canvas = flameRoot.addComponent(Canvas);
+        warn('[Opening] Canvas added to flameRoot, node=', flameRoot.name);
+
         this.spawnFlameEmitter('FlameCore', flameRoot, {
             totalParticles: 300,
-            life: 1.0,
-            lifeVar: 0.4,
-            startSize: 240,
-            startSizeVar: 80,
-            endSize: 60,
-            endSizeVar: 30,
-            speed: 300,
-            speedVar: 120,
+            life: 3.0,
+            lifeVar: 1.0,
+            startSize: 500,
+            startSizeVar: 200,
+            endSize: 100,
+            endSizeVar: 50,
+            speed: 100,
+            speedVar: 50,
             angle: 270,
-            angleVar: 15,
+            angleVar: 30,
             emissionRate: 280,
             startColor: new Color(220, 240, 255, 255),
             startColorVar: new Color(30, 15, 0, 0),
@@ -191,22 +194,36 @@ export class Opening extends Component {
 
         this.spawnFlameEmitter('FlameOuter', flameRoot, {
             totalParticles: 400,
-            life: 1.3,
-            lifeVar: 0.5,
-            startSize: 400,
-            startSizeVar: 140,
-            endSize: 100,
-            endSizeVar: 50,
-            speed: 220,
-            speedVar: 90,
+            life: 3.5,
+            lifeVar: 1.2,
+            startSize: 800,
+            startSizeVar: 300,
+            endSize: 200,
+            endSizeVar: 80,
+            speed: 80,
+            speedVar: 40,
             angle: 270,
-            angleVar: 40,
+            angleVar: 50,
             emissionRate: 220,
-            startColor: new Color(255, 180, 80, 230),
+            startColor: new Color(255, 200, 100, 255),
             startColorVar: new Color(30, 30, 0, 0),
-            endColor: new Color(255, 100, 0, 0),
-            endColorVar: new Color(0, 0, 0, 0),
+            endColor: new Color(255, 60, 0, 120),
+            endColorVar: new Color(20, 0, 0, 0),
         });
+
+        const debugRect = new Node('DebugRect');
+        debugRect.layer = UI_LAYER;
+        const uiTrans = debugRect.addComponent(UITransform);
+        uiTrans.setContentSize(300, 300);
+        const g = debugRect.addComponent(Graphics);
+        g.rect(-150, -150, 300, 300);
+        g.fillColor = new Color(255, 0, 0, 128);
+        g.fill();
+        g.strokeColor = new Color(255, 0, 0, 255);
+        g.lineWidth = 4;
+        g.stroke();
+        flameRoot.addChild(debugRect);
+        warn('[Opening] DebugRect added at flameRoot');
     }
 
     private static _glowFrame: SpriteFrame | null = null;
