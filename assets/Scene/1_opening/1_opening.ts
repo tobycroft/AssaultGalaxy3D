@@ -190,36 +190,37 @@ export class Opening extends Component {
         flameRoot.setScale(1 / shipScale, 1 / shipScale, 1 / shipScale);
         ship.addChild(flameRoot);
 
-        // 参数单位是世界单位（flameRoot 世界缩放为 1），飞船恒为 380 单位，
-        // 故尾焰宽度取船体 12%~18%、焰长取 0.7~0.9 倍船体
+        // 参数单位是世界单位（flameRoot 世界缩放为 1），飞船恒为 380 单位。
+        // 尾焰正对相机有透视压缩+粒子末端缩小淡出，故焰宽取船体 50%~79%、
+        // 焰长取 1.6~2.0 倍船体，endSizeRatio 调高避免末端缩成细线
         this.createFlameEmitter3D(flameRoot, 'FlameCore', {
-            maxParticles: 200,
+            maxParticles: 400,
             startLifetime: 0.8,
             startLifetimeVar: 0.3,
-            startSpeed: 300,
-            startSpeedVar: 90,
-            startSize: 45,
-            startSizeVar: 15,
-            endSizeRatio: 0.15,
-            emissionRate: 180,
-            coneAngle: 8,
-            coneRadius: 8,
+            startSpeed: 750,
+            startSpeedVar: 250,
+            startSize: 200,
+            startSizeVar: 60,
+            endSizeRatio: 0.5,
+            emissionRate: 280,
+            coneAngle: 20,
+            coneRadius: 45,
             startColor: new Color(230, 245, 255, 255),
             endColor: new Color(80, 150, 255, 0),
         });
 
         this.createFlameEmitter3D(flameRoot, 'FlameOuter', {
-            maxParticles: 250,
+            maxParticles: 500,
             startLifetime: 1.1,
             startLifetimeVar: 0.4,
-            startSpeed: 220,
-            startSpeedVar: 70,
-            startSize: 70,
-            startSizeVar: 25,
-            endSizeRatio: 0.1,
-            emissionRate: 140,
-            coneAngle: 18,
-            coneRadius: 16,
+            startSpeed: 600,
+            startSpeedVar: 200,
+            startSize: 300,
+            startSizeVar: 90,
+            endSizeRatio: 0.4,
+            emissionRate: 240,
+            coneAngle: 35,
+            coneRadius: 80,
             startColor: new Color(255, 190, 90, 220),
             endColor: new Color(255, 70, 0, 0),
         });
