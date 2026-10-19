@@ -1,7 +1,7 @@
 [
   {
     "__type__": "cc.SceneAsset",
-    "_name": "1Opening",
+    "_name": "1_opening",
     "_objFlags": 0,
     "__editorExtras__": {},
     "_native": "",
@@ -11,7 +11,7 @@
   },
   {
     "__type__": "cc.Scene",
-    "_name": "1Opening",
+    "_name": "1_opening",
     "_objFlags": 0,
     "__editorExtras__": {},
     "_parent": null,
@@ -20,7 +20,63 @@
         "__id__": 2
       },
       {
-        "__id__": 4
+        "__id__": 5
+      },
+      {
+        "__id__": 7
+      }
+    ],
+    "_active": true,
+    "_components": [
+      {
+        "__id__": 10
+      }
+    ],
+    "_prefab": null,
+    "_lpos": {
+      "__type__": "cc.Vec3",
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "_lrot": {
+      "__type__": "cc.Quat",
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "w": 1
+    },
+    "_lscale": {
+      "__type__": "cc.Vec3",
+      "x": 1,
+      "y": 1,
+      "z": 1
+    },
+    "_mobility": 0,
+    "_layer": 1073741824,
+    "_euler": {
+      "__type__": "cc.Vec3",
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "autoReleaseAssets": false,
+    "_globals": {
+      "__id__": 11
+    },
+    "_id": "3a1b2c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
+  },
+  {
+    "__type__": "cc.Node",
+    "_name": "CameraRig",
+    "_objFlags": 0,
+    "__editorExtras__": {},
+    "_parent": {
+      "__id__": 1
+    },
+    "_children": [
+      {
+        "__id__": 3
       }
     ],
     "_active": true,
@@ -53,11 +109,7 @@
       "y": 0,
       "z": 0
     },
-    "autoReleaseAssets": false,
-    "_globals": {
-      "__id__": 9
-    },
-    "_id": "f59a1031-d9e0-423d-a5a3-7e2be3c9b855"
+    "_id": "a1b2c3d4e5f6a7b8c9d0e1f2"
   },
   {
     "__type__": "cc.Node",
@@ -65,21 +117,21 @@
     "_objFlags": 0,
     "__editorExtras__": {},
     "_parent": {
-      "__id__": 1
+      "__id__": 2
     },
     "_children": [],
     "_active": true,
     "_components": [
       {
-        "__id__": 3
+        "__id__": 4
       }
     ],
     "_prefab": null,
     "_lpos": {
       "__type__": "cc.Vec3",
-      "x": 640,
-      "y": 360,
-      "z": 1000
+      "x": 0,
+      "y": 0,
+      "z": 500
     },
     "_lrot": {
       "__type__": "cc.Quat",
@@ -102,7 +154,7 @@
       "y": 0,
       "z": 0
     },
-    "_id": "b8eiOuHc5PLaNdDvo5RUtV"
+    "_id": "b2c3d4e5f6a7b8c9d0e1f2a3"
   },
   {
     "__type__": "cc.Camera",
@@ -110,7 +162,7 @@
     "_objFlags": 0,
     "__editorExtras__": {},
     "node": {
-      "__id__": 2
+      "__id__": 3
     },
     "_enabled": true,
     "__prefab": null,
@@ -123,9 +175,9 @@
     "_far": 2000,
     "_color": {
       "__type__": "cc.Color",
-      "r": 51,
-      "g": 51,
-      "b": 51,
+      "r": 0,
+      "g": 0,
+      "b": 0,
       "a": 255
     },
     "_depth": 1,
@@ -148,11 +200,11 @@
     "_usePostProcess": false,
     "_cameraType": -1,
     "_trackingType": 0,
-    "_id": "a8fMYOHDxBuJwkOqY2NFhx"
+    "_id": "c3d4e5f6a7b8c9d0e1f2a3b4"
   },
   {
     "__type__": "cc.Node",
-    "_name": "Canvas",
+    "_name": "SpaceSkybox",
     "_objFlags": 0,
     "__editorExtras__": {},
     "_parent": {
@@ -162,23 +214,14 @@
     "_active": true,
     "_components": [
       {
-        "__id__": 5
-      },
-      {
         "__id__": 6
-      },
-      {
-        "__id__": 7
-      },
-      {
-        "__id__": 8
       }
     ],
     "_prefab": null,
     "_lpos": {
       "__type__": "cc.Vec3",
-      "x": 640,
-      "y": 360,
+      "x": 0,
+      "y": 0,
       "z": 0
     },
     "_lrot": {
@@ -195,118 +238,146 @@
       "z": 1
     },
     "_mobility": 0,
-    "_layer": 33554432,
+    "_layer": 1073741824,
     "_euler": {
       "__type__": "cc.Vec3",
       "x": 0,
       "y": 0,
       "z": 0
     },
-    "_id": "d0PF/t9QhCtpoNF7AnfmVv"
+    "_id": "d4e5f6a7b8c9d0e1f2a3b4c5"
   },
   {
-    "__type__": "cc.UITransform",
+    "__type__": "1295bYWNplJlIcI0P3ZqyA2",
     "_name": "",
     "_objFlags": 0,
     "__editorExtras__": {},
     "node": {
-      "__id__": 4
+      "__id__": 5
     },
     "_enabled": true,
     "__prefab": null,
-    "_contentSize": {
-      "__type__": "cc.Size",
-      "width": 1280,
-      "height": 720
-    },
-    "_anchorPoint": {
-      "__type__": "cc.Vec2",
-      "x": 0.5,
-      "y": 0.5
-    },
-    "_id": "91RXb7AeNDebNxKZ1OvPvK"
+    "skyboxDir": "db://assets/Space/cosmos_default",
+    "facePrefix": "",
+    "rotationAngle": 0,
+    "useIBL": true,
+    "_id": "e5f6a7b8c9d0e1f2a3b4c5d6"
   },
   {
-    "__type__": "cc.Canvas",
+    "__type__": "cc.Node",
+    "_name": "DirectionalLight",
+    "_objFlags": 0,
+    "__editorExtras__": {},
+    "_parent": {
+      "__id__": 1
+    },
+    "_children": [],
+    "_active": true,
+    "_components": [
+      {
+        "__id__": 8
+      }
+    ],
+    "_prefab": null,
+    "_lpos": {
+      "__type__": "cc.Vec3",
+      "x": 0,
+      "y": 200,
+      "z": 100
+    },
+    "_lrot": {
+      "__type__": "cc.Quat",
+      "x": -0.3213938048432697,
+      "y": 0.1194575120442867,
+      "z": -0.0653945977312724,
+      "w": 0.9360638010852554
+    },
+    "_lscale": {
+      "__type__": "cc.Vec3",
+      "x": 1,
+      "y": 1,
+      "z": 1
+    },
+    "_mobility": 0,
+    "_layer": 1073741824,
+    "_euler": {
+      "__type__": "cc.Vec3",
+      "x": -38.051,
+      "y": 14.584,
+      "z": 0
+    },
+    "_id": "f6a7b8c9d0e1f2a3b4c5d6e7"
+  },
+  {
+    "__type__": "cc.DirectionalLight",
     "_name": "",
     "_objFlags": 0,
     "__editorExtras__": {},
     "node": {
-      "__id__": 4
+      "__id__": 7
     },
     "_enabled": true,
     "__prefab": null,
-    "_cameraComponent": null,
-    "_alignCanvasWithScreen": true,
-    "_id": "23AAyrNTpOh4uL7iCcqAQf"
+    "_color": {
+      "__type__": "cc.Color",
+      "r": 255,
+      "g": 255,
+      "b": 255,
+      "a": 255
+    },
+    "_useColorTemperature": false,
+    "_colorTemperature": 6570,
+    "_illuminanceHDR": 100000,
+    "_illuminance": 100000,
+    "_illuminanceLDR": 100000,
+    "_staticSettings": {
+      "__id__": 9
+    },
+    "_id": "a7b8c9d0e1f2a3b4c5d6e7f8"
   },
   {
-    "__type__": "cc.Widget",
+    "__type__": "cc.StaticLightSettings",
+    "_baked": false,
+    "_editorOnly": false,
+    "_castShadow": true
+  },
+  {
+    "__type__": "4b5c61+j5oLHC0+T1prfI2e",
     "_name": "",
     "_objFlags": 0,
     "__editorExtras__": {},
     "node": {
-      "__id__": 4
+      "__id__": 1
     },
     "_enabled": true,
     "__prefab": null,
-    "_alignFlags": 45,
-    "_target": null,
-    "_left": 0,
-    "_right": 0,
-    "_top": 0,
-    "_bottom": 0,
-    "_horizontalCenter": 0,
-    "_verticalCenter": 0,
-    "_isAbsLeft": true,
-    "_isAbsRight": true,
-    "_isAbsTop": true,
-    "_isAbsBottom": true,
-    "_isAbsHorizontalCenter": true,
-    "_isAbsVerticalCenter": true,
-    "_originalWidth": 1280,
-    "_originalHeight": 720,
-    "_alignMode": 1,
-    "_lockFlags": 0,
-    "_id": "263SNOEx5GaYnUVLAUScBl"
-  },
-  {
-    "__type__": "33d8dKDS+5F9rReLFN2q9zl",
-    "_name": "",
-    "_objFlags": 0,
-    "__editorExtras__": {},
-    "node": {
-      "__id__": 4
-    },
-    "_enabled": true,
-    "__prefab": null,
-    "_id": "f2travR7FOjKWN6+IfqfdK"
+    "_id": "b8c9d0e1f2a3b4c5d6e7f8a9"
   },
   {
     "__type__": "cc.SceneGlobals",
     "ambient": {
-      "__id__": 10
-    },
-    "shadows": {
-      "__id__": 11
-    },
-    "_skybox": {
       "__id__": 12
     },
-    "fog": {
+    "shadows": {
       "__id__": 13
     },
-    "octree": {
+    "_skybox": {
       "__id__": 14
     },
-    "skin": {
+    "fog": {
       "__id__": 15
     },
-    "lightProbeInfo": {
+    "octree": {
       "__id__": 16
     },
-    "postSettings": {
+    "skin": {
       "__id__": 17
+    },
+    "lightProbeInfo": {
+      "__id__": 18
+    },
+    "postSettings": {
+      "__id__": 19
     },
     "bakedWithStationaryMainLight": false,
     "bakedWithHighpLightmap": false
@@ -327,20 +398,20 @@
       "z": 0.8,
       "w": 0.520833125
     },
-    "_skyIllumHDR": 20000,
-    "_skyIllum": 20000,
+    "_skyIllumHDR": 60000,
+    "_skyIllum": 60000,
     "_groundAlbedoHDR": {
       "__type__": "cc.Vec4",
-      "x": 0.2,
-      "y": 0.2,
-      "z": 0.2,
+      "x": 0.35,
+      "y": 0.35,
+      "z": 0.35,
       "w": 1
     },
     "_groundAlbedo": {
       "__type__": "cc.Vec4",
-      "x": 0.2,
-      "y": 0.2,
-      "z": 0.2,
+      "x": 0.35,
+      "y": 0.35,
+      "z": 0.35,
       "w": 1
     },
     "_skyColorLDR": {
@@ -350,12 +421,12 @@
       "z": 0.8,
       "w": 1
     },
-    "_skyIllumLDR": 20000,
+    "_skyIllumLDR": 60000,
     "_groundAlbedoLDR": {
       "__type__": "cc.Vec4",
-      "x": 0.2,
-      "y": 0.2,
-      "z": 0.2,
+      "x": 0.35,
+      "y": 0.35,
+      "z": 0.35,
       "w": 1
     }
   },
