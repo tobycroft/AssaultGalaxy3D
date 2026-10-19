@@ -19,7 +19,7 @@ export interface CosmosDef {
 
 export const COSMOS_LIST: CosmosDef[] = [
     {
-        dir: 'db://assets/Space/cosmos_default',
+        dir: 'db://assets/Skybox/cosmos_default',
         label: '默认',
         faces: [
             '97d2881b-1562-4981-9e8e-abfbd2077fbc', // right
@@ -31,7 +31,7 @@ export const COSMOS_LIST: CosmosDef[] = [
         ],
     },
     {
-        dir: 'db://assets/Space/cosmos_green',
+        dir: 'db://assets/Skybox/cosmos_green',
         label: '绿色',
         faces: [
             'aa23a73b-44c9-44c1-8882-1ea106c96b02', // right
@@ -43,7 +43,7 @@ export const COSMOS_LIST: CosmosDef[] = [
         ],
     },
     {
-        dir: 'db://assets/Space/cosmos_purple',
+        dir: 'db://assets/Skybox/cosmos_purple',
         label: '紫色',
         faces: [
             '21c64449-c39d-4890-946f-0ed5987bbb02', // right
@@ -55,7 +55,7 @@ export const COSMOS_LIST: CosmosDef[] = [
         ],
     },
     {
-        dir: 'db://assets/Space/cosmos_yellow',
+        dir: 'db://assets/Skybox/cosmos_yellow',
         label: '黄色',
         faces: [
             'd6d0a333-87f7-4849-bed7-cae17e7350dd', // right
@@ -67,7 +67,7 @@ export const COSMOS_LIST: CosmosDef[] = [
         ],
     },
     {
-        dir: 'db://assets/Space/cosmos_red',
+        dir: 'db://assets/Skybox/cosmos_red',
         label: '红色',
         faces: [
             'da8d9eaa-754e-4f1b-80b6-04f2dc142034', // right
@@ -79,7 +79,7 @@ export const COSMOS_LIST: CosmosDef[] = [
         ],
     },
     {
-        dir: 'db://assets/Space/cosmos_blue',
+        dir: 'db://assets/Skybox/cosmos_blue',
         label: '蓝色',
         faces: [
             '17a7ae8c-6838-4376-9597-45830dd7ce14', // right

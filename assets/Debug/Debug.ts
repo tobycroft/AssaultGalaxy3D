@@ -40,7 +40,7 @@ import { paintTechButton, TechButtonKind, techTextColor, TechText } from '../Com
 import { allShardCaps, FX_MAX_SHARDS, FX_SHATTER_CAPS, ShardBlob, ShardEntry, ShardStore } from '../Common/ShardStore';
 import { extractShards, modelFingerprint, readSubMeshes, resolveNodePath, SrcSubMesh } from '../Common/ShardCutter';
 import { BrustExplosion, BrustType, BRUST_TOTAL_LIFE } from '../Effect/Brust/BrustExplosion';
-import { COSMOS_LIST, CosmosDef, applyCosmosSkybox } from '../Space/CosmosCatalog';
+import { COSMOS_LIST, CosmosDef, applyCosmosSkybox } from '../Skybox/CosmosCatalog';
 
 const { ccclass } = _decorator;
 

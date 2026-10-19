@@ -257,8 +257,7 @@
     },
     "_enabled": true,
     "__prefab": null,
-    "skyboxDir": "db://assets/Space/cosmos_default",
-    "facePrefix": "",
+    "skyboxDir": "db://assets/Skybox/cosmos_default",
     "rotationAngle": 0,
     "useIBL": true,
     "_id": "e5f6a7b8c9d0e1f2a3b4c5d6"
@@ -327,12 +326,30 @@
     },
     "_useColorTemperature": false,
     "_colorTemperature": 6570,
-    "_illuminanceHDR": 100000,
-    "_illuminance": 100000,
-    "_illuminanceLDR": 100000,
     "_staticSettings": {
       "__id__": 9
     },
+    "_visibility": -325058561,
+    "_illuminanceHDR": 100000,
+    "_illuminance": 100000,
+    "_illuminanceLDR": 100000,
+    "_shadowEnabled": false,
+    "_shadowPcf": 2,
+    "_shadowBias": 0.00001,
+    "_shadowNormalBias": 0,
+    "_shadowSaturation": 1,
+    "_shadowDistance": 50,
+    "_shadowInvisibleOcclusionRange": 200,
+    "_csmLevel": 4,
+    "_csmLayerLambda": 0.75,
+    "_csmOptimizationMode": 2,
+    "_csmAdvancedOptions": false,
+    "_csmLayersTransition": false,
+    "_csmTransitionRange": 0.05,
+    "_shadowFixedArea": false,
+    "_shadowNear": 0.1,
+    "_shadowFar": 10,
+    "_shadowOrthoSize": 5,
     "_id": "a7b8c9d0e1f2a3b4c5d6e7f8"
   },
   {
@@ -389,14 +406,14 @@
       "x": 0.2,
       "y": 0.5,
       "z": 0.8,
-      "w": 0.520833125
+      "w": 1.562499375
     },
     "_skyColor": {
       "__type__": "cc.Vec4",
       "x": 0.2,
       "y": 0.5,
       "z": 0.8,
-      "w": 0.520833125
+      "w": 1.562499375
     },
     "_skyIllumHDR": 60000,
     "_skyIllum": 60000,
@@ -419,7 +436,7 @@
       "x": 0.2,
       "y": 0.5,
       "z": 0.8,
-      "w": 1
+      "w": 60000
     },
     "_skyIllumLDR": 60000,
     "_groundAlbedoLDR": {
@@ -459,14 +476,26 @@
   {
     "__type__": "cc.SkyboxInfo",
     "_envLightingType": 0,
-    "_envmapHDR": null,
-    "_envmap": null,
-    "_envmapLDR": null,
+    "_envmapHDR": {
+      "__uuid__": "d032ac98-05e1-4090-88bb-eb640dcb5fc1@b47c0",
+      "__expectedType__": "cc.TextureCube"
+    },
+    "_envmap": {
+      "__uuid__": "d032ac98-05e1-4090-88bb-eb640dcb5fc1@b47c0",
+      "__expectedType__": "cc.TextureCube"
+    },
+    "_envmapLDR": {
+      "__uuid__": "6f01cf7f-81bf-4a7e-bd5d-0afc19696480@b47c0",
+      "__expectedType__": "cc.TextureCube"
+    },
     "_diffuseMapHDR": null,
     "_diffuseMapLDR": null,
-    "_enabled": false,
-    "_useHDR": true,
-    "_editableMaterial": null,
+    "_enabled": true,
+    "_useHDR": false,
+    "_editableMaterial": {
+      "__uuid__": "0609709f-6fe6-4f01-97f0-bbc700a973e8",
+      "__expectedType__": "cc.Material"
+    },
     "_reflectionHDR": null,
     "_reflectionLDR": null,
     "_rotationAngle": 0

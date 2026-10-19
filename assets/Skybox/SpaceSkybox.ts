@@ -17,7 +17,7 @@ const { ccclass, property } = _decorator;
 export class SpaceSkybox extends Component {
     /** 六面贴图目录（db:// 资源 URL），须已登记到 CosmosCatalog.COSMOS_LIST */
     @property
-    skyboxDir = 'db://assets/Space/cosmos_default';
+    skyboxDir = 'db://assets/Skybox/cosmos_default';
 
     /** 天空盒旋转角（度），微调银河带朝向 */
     @property
