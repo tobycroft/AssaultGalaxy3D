@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, Vec3, Vec2, Color, tween, resources, Prefab, instantiate, geometry, MeshRenderer, ParticleSystem2D, UITransform, SpriteFrame, Texture2D, ImageAsset, Rect, Canvas, Graphics, gfx, warn } from 'cc';
+import { _decorator, Component, Node, Vec3, Vec2, Color, tween, resources, Prefab, instantiate, geometry, MeshRenderer, ParticleSystem2D, UITransform, SpriteFrame, Texture2D, ImageAsset, Rect, Canvas, gfx, warn } from 'cc';
 
 const { ccclass } = _decorator;
 
@@ -162,68 +162,61 @@ export class Opening extends Component {
     private createEngineFlame(ship: Node): void {
         const tailZ = this.getTailWorldZ(ship);
         const shipScale = ship.scale.x || 1;
+        const flameLocalZ = (tailZ - 20) / shipScale;
 
         const flameRoot = new Node('EngineFlame');
         flameRoot.layer = UI_LAYER;
-        flameRoot.setPosition(0, 0, (tailZ - 20) / shipScale);
-        flameRoot.setRotationFromEuler(-90, 0, 0);
+        flameRoot.setPosition(0, 0, flameLocalZ);
         flameRoot.setScale(1 / shipScale, 1 / shipScale, 1 / shipScale);
         ship.addChild(flameRoot);
 
         const canvas = flameRoot.addComponent(Canvas);
-        warn('[Opening] Canvas added to flameRoot, node=', flameRoot.name);
 
-        this.spawnFlameEmitter('FlameCore', flameRoot, {
-            totalParticles: 300,
-            life: 3.0,
-            lifeVar: 1.0,
-            startSize: 500,
-            startSizeVar: 200,
-            endSize: 100,
-            endSizeVar: 50,
-            speed: 100,
-            speedVar: 50,
-            angle: 270,
-            angleVar: 30,
-            emissionRate: 280,
-            startColor: new Color(220, 240, 255, 255),
-            startColorVar: new Color(30, 15, 0, 0),
-            endColor: new Color(120, 180, 255, 0),
-            endColorVar: new Color(0, 0, 0, 0),
-        });
+        const crossAngles = [0, 60, 120];
+        for (const rotY of crossAngles) {
+            const slice = new Node('FlameSlice_' + rotY);
+            slice.layer = UI_LAYER;
+            slice.setRotationFromEuler(-90, rotY, 0);
+            flameRoot.addChild(slice);
 
-        this.spawnFlameEmitter('FlameOuter', flameRoot, {
-            totalParticles: 400,
-            life: 3.5,
-            lifeVar: 1.2,
-            startSize: 800,
-            startSizeVar: 300,
-            endSize: 200,
-            endSizeVar: 80,
-            speed: 80,
-            speedVar: 40,
-            angle: 270,
-            angleVar: 50,
-            emissionRate: 220,
-            startColor: new Color(255, 200, 100, 255),
-            startColorVar: new Color(30, 30, 0, 0),
-            endColor: new Color(255, 60, 0, 120),
-            endColorVar: new Color(20, 0, 0, 0),
-        });
+            this.spawnFlameEmitter('Core_' + rotY, slice, {
+                totalParticles: 120,
+                life: 0.8,
+                lifeVar: 0.3,
+                startSize: 60,
+                startSizeVar: 20,
+                endSize: 15,
+                endSizeVar: 8,
+                speed: 280,
+                speedVar: 80,
+                angle: 270,
+                angleVar: 12,
+                emissionRate: 150,
+                startColor: new Color(220, 240, 255, 255),
+                startColorVar: new Color(30, 15, 0, 0),
+                endColor: new Color(100, 160, 255, 0),
+                endColorVar: new Color(0, 0, 0, 0),
+            });
 
-        const debugRect = new Node('DebugRect');
-        debugRect.layer = UI_LAYER;
-        const uiTrans = debugRect.addComponent(UITransform);
-        uiTrans.setContentSize(300, 300);
-        const g = debugRect.addComponent(Graphics);
-        g.rect(-150, -150, 300, 300);
-        g.fillColor = new Color(255, 0, 0, 128);
-        g.fill();
-        g.strokeColor = new Color(255, 0, 0, 255);
-        g.lineWidth = 4;
-        g.stroke();
-        flameRoot.addChild(debugRect);
-        warn('[Opening] DebugRect added at flameRoot');
+            this.spawnFlameEmitter('Outer_' + rotY, slice, {
+                totalParticles: 160,
+                life: 1.1,
+                lifeVar: 0.4,
+                startSize: 90,
+                startSizeVar: 30,
+                endSize: 25,
+                endSizeVar: 12,
+                speed: 200,
+                speedVar: 60,
+                angle: 270,
+                angleVar: 25,
+                emissionRate: 120,
+                startColor: new Color(255, 180, 80, 220),
+                startColorVar: new Color(30, 30, 0, 0),
+                endColor: new Color(255, 80, 0, 0),
+                endColorVar: new Color(0, 0, 0, 0),
+            });
+        }
     }
 
     private static _glowFrame: SpriteFrame | null = null;
