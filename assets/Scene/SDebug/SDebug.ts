@@ -25,7 +25,7 @@ const BG_COLOR = new Color(10, 18, 32, 255);
  * name 为场景名（loadScene 用），label 为按钮展示名。
  */
 const SCENE_LIST: { name: string; label: string }[] = [
-    { name: '1Opening', label: '1Opening · 深空前线（开场运镜）' },
+    { name: '1_opening', label: '1_opening · 深空前线（开场运镜）' },
 ];
 
 /**
