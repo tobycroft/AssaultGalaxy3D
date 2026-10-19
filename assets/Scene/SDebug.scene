@@ -118,7 +118,7 @@
     "_priority": 0,
     "_fov": 45,
     "_fovAxis": 0,
-    "_orthoHeight": 360,
+    "_orthoHeight": 471.87637969094925,
     "_near": 1,
     "_far": 2000,
     "_color": {
@@ -194,8 +194,8 @@
       "y": 1,
       "z": 1
     },
-    "_mobility": 0,
-    "_layer": 33554432,
+    "_mobility": 1,
+    "_layer": 4294967295,
     "_euler": {
       "__type__": "cc.Vec3",
       "x": 0,
