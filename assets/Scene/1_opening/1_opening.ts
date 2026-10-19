@@ -5,12 +5,12 @@ const { ccclass } = _decorator;
 const SHIP_DIR = 'Model/spaceship';
 const TARGET_SHIP_SIZE = 380;
 
-const DOLLY_DURATION = 8.0;
+const DOLLY_DURATION = 12.0;
 const ORBIT_EASING = 'cubicInOut';
 
 const SHIP_HALF_SIZE = TARGET_SHIP_SIZE / 2;
 
-const Z_DEEP_SPACE = SHIP_HALF_SIZE * 6;
+const Z_DEEP_SPACE = SHIP_HALF_SIZE * 100;
 const Z_TAIL = SHIP_HALF_SIZE * 2.4;
 
 @ccclass('Opening')
