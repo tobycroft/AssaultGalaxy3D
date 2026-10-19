@@ -17,14 +17,6 @@ import {
     MeshRenderer,
     DirectionalLight,
     Camera,
-    ParticleSystem2D,
-    SpriteFrame,
-    Texture2D,
-    Rect,
-    assetManager,
-    gfx,
-    Vec2,
-    warn,
 } from 'cc';
 import { fadeIn, pressEffect } from '../../Common/UIAnim';
 import { paintTechButton, TechText, techTextColor } from '../../Common/TechUI';
@@ -42,9 +34,6 @@ const TARGET_SHIP_SIZE = 380;
 const SHIP_DIR = 'Model/spaceship';
 // 机库深色背景色（相机清屏色，与旧全屏 Graphics 填充色一致）
 const BG_COLOR = new Color(10, 18, 32, 255);
-
-const SHIP_HALF_SIZE = TARGET_SHIP_SIZE / 2;
-const DEFAULT_SPRITE_UUID = '20835ba4-6145-4fbc-a58a-051ce700aa3e';
 
 /**
  * 停机库（Hangar）：游戏入口流程的第二站（Intro 开场动画之后）。
@@ -230,10 +219,7 @@ export class Hangar extends Component {
         this.modelRoot!.addChild(ship);
         this.currentShip = ship;
         // 包围盒适配延迟一帧（渲染 Model 的世界矩阵需管线更新后才有）
-        this.scheduleOnce(() => {
-            this.fitShip(ship);
-            this.createEngineFlame(ship);
-        }, 0);
+        this.scheduleOnce(() => this.fitShip(ship), 0);
         this.setStatus('当前展示: ' + name);
     }
 
@@ -324,127 +310,5 @@ export class Hangar extends Component {
         const ambient = director.root.pipeline.pipelineSceneData.ambient;
         ambient.skyIllum = 60000;
         ambient.groundAlbedo = new Vec4(0.35, 0.35, 0.35, 1);
-    }
-
-    private getTailWorldZ(ship: Node): number {
-        const aabb = new geometry.AABB();
-        const renderers = ship.getComponentsInChildren(MeshRenderer);
-        let minZ = Infinity;
-        for (const r of renderers) {
-            const m = r.model;
-            if (!m || !m.modelBounds) continue;
-            geometry.AABB.transform(aabb, m.modelBounds, r.node.worldMatrix);
-            minZ = Math.min(minZ, aabb.center.z - aabb.halfExtents.z);
-        }
-        return isFinite(minZ) ? minZ : -SHIP_HALF_SIZE;
-    }
-
-    private createEngineFlame(ship: Node): void {
-        const tailZ = this.getTailWorldZ(ship);
-        const shipScale = ship.scale.x || 1;
-
-        const flameRoot = new Node('EngineFlame');
-        flameRoot.layer = UI_LAYER;
-        flameRoot.setPosition(0, 0, (tailZ - 20) / shipScale);
-        flameRoot.setRotationFromEuler(-90, 0, 0);
-        flameRoot.setScale(1 / shipScale, 1 / shipScale, 1 / shipScale);
-        ship.addChild(flameRoot);
-
-        this.spawnFlameEmitter('FlameCore', flameRoot, {
-            totalParticles: 300,
-            life: 1.0,
-            lifeVar: 0.4,
-            startSize: 120,
-            startSizeVar: 40,
-            endSize: 30,
-            endSizeVar: 15,
-            speed: 600,
-            speedVar: 250,
-            angle: 90,
-            angleVar: 15,
-            emissionRate: 280,
-            startColor: new Color(220, 240, 255, 255),
-            startColorVar: new Color(30, 15, 0, 0),
-            endColor: new Color(120, 180, 255, 0),
-            endColorVar: new Color(0, 0, 0, 0),
-        });
-
-        this.spawnFlameEmitter('FlameOuter', flameRoot, {
-            totalParticles: 400,
-            life: 1.3,
-            lifeVar: 0.5,
-            startSize: 200,
-            startSizeVar: 70,
-            endSize: 50,
-            endSizeVar: 25,
-            speed: 450,
-            speedVar: 180,
-            angle: 90,
-            angleVar: 40,
-            emissionRate: 220,
-            startColor: new Color(255, 180, 80, 230),
-            startColorVar: new Color(30, 30, 0, 0),
-            endColor: new Color(255, 100, 0, 0),
-            endColorVar: new Color(0, 0, 0, 0),
-        });
-    }
-
-    private spawnFlameEmitter(name: string, parent: Node, cfg: {
-        totalParticles: number;
-        life: number; lifeVar: number;
-        startSize: number; startSizeVar: number;
-        endSize: number; endSizeVar: number;
-        speed: number; speedVar: number;
-        angle: number; angleVar: number;
-        emissionRate: number;
-        startColor: Color; startColorVar: Color;
-        endColor: Color; endColorVar: Color;
-    }): void {
-        const n = new Node(name);
-        n.layer = UI_LAYER;
-        n.addComponent(UITransform).setContentSize(10, 10);
-
-        const ps = n.addComponent(ParticleSystem2D);
-        ps.custom = true;
-        ps.playOnLoad = false;
-        ps.totalParticles = cfg.totalParticles;
-        ps.duration = -1;
-        ps.life = cfg.life;
-        ps.lifeVar = cfg.lifeVar;
-        ps.startSize = cfg.startSize;
-        ps.startSizeVar = cfg.startSizeVar;
-        ps.endSize = cfg.endSize;
-        ps.endSizeVar = cfg.endSizeVar;
-        ps.speed = cfg.speed;
-        ps.speedVar = cfg.speedVar;
-        ps.angle = cfg.angle;
-        ps.angleVar = cfg.angleVar;
-        ps.gravity = new Vec2(0, 0);
-        ps.emissionRate = cfg.emissionRate;
-        ps.positionType = 0;
-        ps.startColor = cfg.startColor;
-        ps.startColorVar = cfg.startColorVar;
-        ps.endColor = cfg.endColor;
-        ps.endColorVar = cfg.endColorVar;
-
-        const blend = ps as unknown as { srcBlendFactor: number; dstBlendFactor: number; depthTest: boolean; depthWrite: boolean };
-        blend.srcBlendFactor = gfx.BlendFactor.SRC_ALPHA;
-        blend.dstBlendFactor = gfx.BlendFactor.ONE;
-        blend.depthTest = false;
-        blend.depthWrite = false;
-
-        parent.addChild(n);
-
-        assetManager.loadAny({ uuid: DEFAULT_SPRITE_UUID }, (err, img) => {
-            if (err || !img || !n.isValid) return;
-            const tex = new Texture2D();
-            tex.image = img as any;
-            const sf = new SpriteFrame();
-            sf.texture = tex;
-            sf.rect = new Rect(0, 0, tex.width, tex.height);
-            sf.packable = false;
-            ps.spriteFrame = sf;
-            ps.resetSystem();
-        });
     }
 }
