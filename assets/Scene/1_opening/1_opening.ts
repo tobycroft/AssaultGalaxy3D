@@ -13,7 +13,10 @@ const SHIP_HALF_SIZE = TARGET_SHIP_SIZE / 2;
 const Z_DEEP_SPACE = SHIP_HALF_SIZE * 100;
 const Z_TAIL = SHIP_HALF_SIZE * 2.4;
 
+const ANGLE_TAN = Math.tan(15 * Math.PI / 180);
+
 const DEFAULT_SPRITE_UUID = '20835ba4-6145-4fbc-a58a-051ce700aa3e';
+const UI_LAYER = 33554432;
 
 @ccclass('Opening')
 export class Opening extends Component {
@@ -44,7 +47,7 @@ export class Opening extends Component {
         if (!this.cameraRig || !this.cameraNode) return;
         this.cameraRig.setPosition(0, 0, 0);
         this.cameraRig.setRotationFromEuler(0, 0, 0);
-        this.cameraNode.setPosition(0, Z_DEEP_SPACE, Z_DEEP_SPACE);
+        this.cameraNode.setPosition(0, Z_DEEP_SPACE * ANGLE_TAN, Z_DEEP_SPACE);
         this.cameraNode.lookAt(Vec3.ZERO);
     }
 
@@ -106,11 +109,11 @@ export class Opening extends Component {
 
         this.cameraRig.setPosition(0, 0, 0);
         this.cameraRig.setRotationFromEuler(0, 0, 0);
-        this.cameraNode.setPosition(0, Z_DEEP_SPACE, Z_DEEP_SPACE);
+        this.cameraNode.setPosition(0, Z_DEEP_SPACE * ANGLE_TAN, Z_DEEP_SPACE);
         this.cameraNode.lookAt(Vec3.ZERO);
 
-        const startY = Z_DEEP_SPACE;
-        const endY = Z_TAIL;
+        const startY = Z_DEEP_SPACE * ANGLE_TAN;
+        const endY = Z_TAIL * ANGLE_TAN;
         const startZ = Z_DEEP_SPACE;
         const endZ = Z_TAIL;
 
@@ -163,47 +166,47 @@ export class Opening extends Component {
         const shipScale = ship.scale.x || 1;
 
         const flameRoot = new Node('EngineFlame');
-        flameRoot.layer = ship.layer;
-        flameRoot.setPosition(0, 0, tailZ / shipScale);
+        flameRoot.layer = UI_LAYER;
+        flameRoot.setPosition(0, 0, (tailZ - 20) / shipScale);
         flameRoot.setRotationFromEuler(-90, 0, 0);
         flameRoot.setScale(1 / shipScale, 1 / shipScale, 1 / shipScale);
         ship.addChild(flameRoot);
 
         this.spawnFlameEmitter('FlameCore', flameRoot, {
-            totalParticles: 200,
-            life: 0.8,
-            lifeVar: 0.3,
-            startSize: 60,
-            startSizeVar: 20,
-            endSize: 15,
-            endSizeVar: 8,
-            speed: 500,
-            speedVar: 200,
+            totalParticles: 300,
+            life: 1.0,
+            lifeVar: 0.4,
+            startSize: 120,
+            startSizeVar: 40,
+            endSize: 30,
+            endSizeVar: 15,
+            speed: 600,
+            speedVar: 250,
             angle: 90,
-            angleVar: 12,
-            emissionRate: 220,
-            startColor: new Color(200, 230, 255, 255),
-            startColorVar: new Color(40, 20, 0, 0),
-            endColor: new Color(100, 160, 255, 0),
+            angleVar: 15,
+            emissionRate: 280,
+            startColor: new Color(220, 240, 255, 255),
+            startColorVar: new Color(30, 15, 0, 0),
+            endColor: new Color(120, 180, 255, 0),
             endColorVar: new Color(0, 0, 0, 0),
         });
 
         this.spawnFlameEmitter('FlameOuter', flameRoot, {
-            totalParticles: 300,
-            life: 1.1,
-            lifeVar: 0.4,
-            startSize: 110,
-            startSizeVar: 40,
-            endSize: 30,
-            endSizeVar: 15,
-            speed: 380,
-            speedVar: 150,
+            totalParticles: 400,
+            life: 1.3,
+            lifeVar: 0.5,
+            startSize: 200,
+            startSizeVar: 70,
+            endSize: 50,
+            endSizeVar: 25,
+            speed: 450,
+            speedVar: 180,
             angle: 90,
-            angleVar: 35,
-            emissionRate: 180,
-            startColor: new Color(255, 160, 60, 220),
+            angleVar: 40,
+            emissionRate: 220,
+            startColor: new Color(255, 180, 80, 230),
             startColorVar: new Color(30, 30, 0, 0),
-            endColor: new Color(255, 80, 0, 0),
+            endColor: new Color(255, 100, 0, 0),
             endColorVar: new Color(0, 0, 0, 0),
         });
     }
@@ -220,7 +223,7 @@ export class Opening extends Component {
         endColor: Color; endColorVar: Color;
     }): void {
         const n = new Node(name);
-        n.layer = parent.layer;
+        n.layer = UI_LAYER;
         n.addComponent(UITransform).setContentSize(10, 10);
 
         const ps = n.addComponent(ParticleSystem2D);
@@ -246,9 +249,11 @@ export class Opening extends Component {
         ps.endColor = cfg.endColor;
         ps.endColorVar = cfg.endColorVar;
 
-        const blend = ps as unknown as { srcBlendFactor: number; dstBlendFactor: number };
+        const blend = ps as unknown as { srcBlendFactor: number; dstBlendFactor: number; depthTest: boolean; depthWrite: boolean };
         blend.srcBlendFactor = gfx.BlendFactor.SRC_ALPHA;
         blend.dstBlendFactor = gfx.BlendFactor.ONE;
+        blend.depthTest = false;
+        blend.depthWrite = false;
 
         parent.addChild(n);
 
