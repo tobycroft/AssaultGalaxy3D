@@ -1,9 +1,8 @@
-import { _decorator, Component, Node, Vec3, tween, resources, Prefab, instantiate, geometry, MeshRenderer, warn } from 'cc';
+import { _decorator, Component, Node, Vec3, tween, assetManager, Prefab, instantiate, geometry, MeshRenderer, warn } from 'cc';
 
 const { ccclass } = _decorator;
 
-const SHIP_DIR = 'Model/spaceship';
-const SHIP_NAME = 'default_hq';
+const SHIP_PREFAB_UUID = '47c67489-b792-4bb0-b34a-98df349e2bcf@f579f';
 const TARGET_SHIP_SIZE = 100;
 const DOLLY_FAR = 500;
 const DOLLY_NEAR = 50;
@@ -35,18 +34,12 @@ export class Opening extends Component {
     }
 
     private loadShip(): void {
-        const infos = resources.getDirWithPath(SHIP_DIR, Prefab);
-        const info = infos?.find((i) => i.path.endsWith(SHIP_NAME));
-        if (!info) {
-            warn('[Opening] Ship model not found in resources: ' + SHIP_DIR + '/' + SHIP_NAME);
-            return;
-        }
-        resources.load(info.path, Prefab, (err, prefab) => {
+        assetManager.loadAny({ uuid: SHIP_PREFAB_UUID }, (err, prefab) => {
             if (err || !prefab) {
                 warn('[Opening] Failed to load ship model:', err);
                 return;
             }
-            const ship = instantiate(prefab);
+            const ship = instantiate(prefab as Prefab);
             ship.setPosition(0, 0, 0);
             this.node.addChild(ship);
             this.scheduleOnce(() => {
