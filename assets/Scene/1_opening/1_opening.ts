@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, Vec3, tween, assetManager, Prefab, instantiate, geometry, MeshRenderer, warn } from 'cc';
+import { _decorator, Component, Node, Vec3, Quat, tween, assetManager, Prefab, instantiate, geometry, MeshRenderer, warn } from 'cc';
 
 const { ccclass } = _decorator;
 
@@ -6,15 +6,15 @@ const SHIP_PREFAB_UUID = '47c67489-b792-4bb0-b34a-98df349e2bcf@f579f';
 const TARGET_SHIP_SIZE = 100;
 
 // 动画参数
-const DOLLY_DURATION = 3.5;
+const DOLLY_DURATION = 4.0;
 const ORBIT_DURATION = 5.0;
-const FINAL_DURATION = 2.0;
+const FINAL_DURATION = 2.5;
 const ORBIT_EASING = 'cubicInOut';
 
-// 相机关键位置（相对于 CameraRig）
-const POS_DEEP_SPACE = new Vec3(0, 300, 1200);   // 深空远处，俯视
-const POS_APPROACH = new Vec3(0, 60, 300);       // 靠近飞船，略高
-const POS_TAIL = new Vec3(0, 20, -80);           // 飞船尾部第三人称视角
+// 相机关键位置（相对于 CameraRig，即世界空间）
+const POS_DEEP_SPACE = new Vec3(0, 120, 800);    // 深空远处，飞船在画面中部偏下
+const POS_APPROACH = new Vec3(0, 40, 220);       // 靠近飞船外部，尾部方向
+const POS_TAIL = new Vec3(0, 15, 140);           // 最终：飞船尾部外部第三人称视角
 
 @ccclass('Opening')
 export class Opening extends Component {
@@ -88,10 +88,10 @@ export class Opening extends Component {
     }
 
     /**
-     * 四段式运镜：
-     * 1. 深空远处（高角度俯视）→ 飞近飞船
+     * 三段式运镜：
+     * 1. 深空远处 → 由远及近飞到飞船尾部外部（飞船始终在画面中部偏下）
      * 2. 靠近后绕飞船 360° 环绕
-     * 3. 环绕结束后落到飞船尾部第三人称视角
+     * 3. 环绕结束后聚焦到飞船尾部第三人称视角
      */
     private startCameraAnimation(): void {
         if (!this.cameraRig || !this.cameraNode) return;
@@ -100,18 +100,13 @@ export class Opening extends Component {
         this.cameraRig.setPosition(0, 0, 0);
         this.cameraRig.setRotationFromEuler(0, 0, 0);
 
-        // 起始：深空远处
-        this.cameraNode.setPosition(POS_DEEP_SPACE);
-        this.cameraNode.lookAt(Vec3.ZERO);
+        // 起始：深空远处，相机看向飞船
+        this.setCameraLookAt(POS_DEEP_SPACE, Vec3.ZERO);
 
-        // 阶段一：从深空飞近飞船
-        tween(this.cameraNode)
-            .to(DOLLY_DURATION, { position: POS_APPROACH.clone() }, {
-                easing: ORBIT_EASING,
-                onUpdate: () => this.cameraNode!.lookAt(Vec3.ZERO),
-            })
-            .call(() => this.startOrbit())
-            .start();
+        // 阶段一：从深空由远及近飞到飞船尾部外部
+        this.tweenCameraTo(POS_DEEP_SPACE, POS_APPROACH, DOLLY_DURATION, () => {
+            this.startOrbit();
+        });
     }
 
     /** 阶段二：绕飞船 360° 环绕，相机始终注视飞船 */
@@ -121,22 +116,50 @@ export class Opening extends Component {
         tween(this.cameraRig)
             .to(ORBIT_DURATION, { eulerAngles: new Vec3(0, 360, 0) }, {
                 easing: ORBIT_EASING,
-                onUpdate: () => this.cameraNode!.lookAt(Vec3.ZERO),
+                onUpdate: () => {
+                    // rig 旋转时，相机保持相对位置，但需要重新看向原点
+                    this.cameraNode!.lookAt(Vec3.ZERO);
+                },
             })
             .call(() => this.finalPosition())
             .start();
     }
 
-    /** 阶段三：落到飞船尾部第三人称视角 */
+    /** 阶段三：聚焦到飞船尾部第三人称视角 */
     private finalPosition(): void {
         if (!this.cameraNode) return;
 
-        // rig 已转完 360°（等同于 0°），直接移动相机到尾部位置
-        tween(this.cameraNode)
-            .to(FINAL_DURATION, { position: POS_TAIL.clone() }, {
+        // rig 已转完 360°（等同于 0°），相机从当前位置移到尾部外部
+        this.tweenCameraTo(this.cameraNode.position.clone(), POS_TAIL, FINAL_DURATION);
+    }
+
+    /** 辅助：设置相机位置和朝向（lookAt） */
+    private setCameraLookAt(pos: Vec3, target: Vec3): void {
+        if (!this.cameraNode) return;
+        this.cameraNode.setPosition(pos);
+        this.cameraNode.lookAt(target);
+    }
+
+    /** 辅助：tween 相机从 startPos 到 endPos，过程中保持 lookAt 原点 */
+    private tweenCameraTo(startPos: Vec3, endPos: Vec3, duration: number, onComplete?: () => void): void {
+        if (!this.cameraNode) return;
+
+        // 先设置到起始位置
+        this.cameraNode.setPosition(startPos);
+        this.cameraNode.lookAt(Vec3.ZERO);
+
+        const tw = tween(this.cameraNode)
+            .to(duration, { position: endPos.clone() }, {
                 easing: ORBIT_EASING,
-                onUpdate: () => this.cameraNode!.lookAt(Vec3.ZERO),
-            })
-            .start();
+                onUpdate: () => {
+                    // tween 每帧更新位置后，重新计算朝向
+                    this.cameraNode!.lookAt(Vec3.ZERO);
+                },
+            });
+
+        if (onComplete) {
+            tw.call(onComplete);
+        }
+        tw.start();
     }
 }
