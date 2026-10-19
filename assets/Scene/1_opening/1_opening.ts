@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, Vec3, Color, tween, resources, Prefab, instantiate, geometry, MeshRenderer, ParticleSystem, Gradient, CurveRange, GradientRange, SpriteFrame, Texture2D, ImageAsset, Rect, warn, js, Material, builtinResMgr } from 'cc';
+import { _decorator, Component, Node, Vec3, Color, tween, resources, Prefab, instantiate, geometry, MeshRenderer, ParticleSystem, Gradient, CurveRange, GradientRange, SpriteFrame, Texture2D, ImageAsset, Rect, warn, js, Material, builtinResMgr, input, Input, EventTouch, Tween } from 'cc';
 
 const { ccclass } = _decorator;
 
@@ -14,6 +14,13 @@ const Z_DEEP_SPACE = SHIP_HALF_SIZE * 100;
 const Z_TAIL = SHIP_HALF_SIZE * 2.4;
 
 const ANGLE_TAN = Math.tan(15 * Math.PI / 180);
+
+/** 拖动环视灵敏度（度/像素），与 Debug 天空盒一致 */
+const DRAG_SPEED = 0.35;
+/** 拖动环视俯仰限位（度），防止视角翻到飞船下方 */
+const PITCH_LIMIT = 60;
+/** 接管视角时补完推镜的短动画时长（秒） */
+const TAKEOVER_DOLLY = 0.5;
 
 /**
  * 引擎内部粒子模块的最小字段约定。
@@ -44,10 +51,28 @@ export class Opening extends Component {
     private cameraNode: Node | null = null;
     private fitRetryCount = 0;
 
+    /** 开场推镜 tween 引用，拖动时停掉以接管视角 */
+    private dollyTween: Tween<Node> | null = null;
+    private dragging = false;
+    private dragLastX = 0;
+    private dragLastY = 0;
+    private orbitYaw = 0;
+    private orbitPitch = 0;
+    /** 用户是否已通过拖动接管视角（接管后开场动画不再覆盖） */
+    private viewTakenOver = false;
+
     onLoad(): void {
         this.findCameraNodes();
         this.setCameraToDeepSpace();
         this.loadShip();
+        this.bindDragInput();
+    }
+
+    onDestroy(): void {
+        input.off(Input.EventType.TOUCH_START, this.onDragStart, this);
+        input.off(Input.EventType.TOUCH_MOVE, this.onDragMove, this);
+        input.off(Input.EventType.TOUCH_END, this.onDragEnd, this);
+        input.off(Input.EventType.TOUCH_CANCEL, this.onDragEnd, this);
     }
 
     private findCameraNodes(): void {
@@ -125,6 +150,8 @@ export class Opening extends Component {
 
     private startCameraAnimation(): void {
         if (!this.cameraRig || !this.cameraNode) return;
+        // 用户已拖动接管视角时，开场动画不再覆盖用户操作
+        if (this.viewTakenOver) return;
 
         this.cameraRig.setPosition(0, 0, 0);
         this.cameraRig.setRotationFromEuler(0, 0, 0);
@@ -136,7 +163,7 @@ export class Opening extends Component {
         const startZ = Z_DEEP_SPACE;
         const endZ = Z_TAIL;
 
-        tween(this.cameraRig)
+        this.dollyTween = tween(this.cameraRig)
             .to(DOLLY_DURATION, { eulerAngles: new Vec3(0, 180, 0) }, {
                 easing: ORBIT_EASING,
                 onUpdate: (_target: Node, ratio: number) => {
@@ -146,7 +173,79 @@ export class Opening extends Component {
                     this.cameraNode!.lookAt(Vec3.ZERO);
                 },
             })
+            .call(() => { this.dollyTween = null; })
             .start();
+    }
+
+    /**
+     * 拖动环视：注册全局触摸监听。
+     * 纯 3D 场景根节点没有 UITransform，节点级 TOUCH 事件不会分发，
+     * 必须走全局 input（与 MusicManager 的音频恢复监听同一模式）。
+     */
+    private bindDragInput(): void {
+        input.on(Input.EventType.TOUCH_START, this.onDragStart, this);
+        input.on(Input.EventType.TOUCH_MOVE, this.onDragMove, this);
+        input.on(Input.EventType.TOUCH_END, this.onDragEnd, this);
+        input.on(Input.EventType.TOUCH_CANCEL, this.onDragEnd, this);
+    }
+
+    /** 拖动环视：按下只记录起点，真正移动时才接管视角，避免误触打断开场动画 */
+    private onDragStart(e: EventTouch): void {
+        this.dragging = true;
+        this.dragLastX = e.getLocationX();
+        this.dragLastY = e.getLocationY();
+    }
+
+    /**
+     * 拖动环视：水平→偏航、垂直→俯仰（限位 ±PITCH_LIMIT）。
+     * 旋转 CameraRig 即绕飞船环视，随后让相机重新朝向飞船。
+     */
+    private onDragMove(e: EventTouch): void {
+        if (!this.dragging || !this.cameraRig) return;
+        const x = e.getLocationX();
+        const y = e.getLocationY();
+        const dx = x - this.dragLastX;
+        const dy = y - this.dragLastY;
+        this.dragLastX = x;
+        this.dragLastY = y;
+        if (dx === 0 && dy === 0) return;
+        this.takeOverView();
+        this.orbitYaw -= dx * DRAG_SPEED;
+        this.orbitPitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.orbitPitch - dy * DRAG_SPEED));
+        this.cameraRig.setRotationFromEuler(this.orbitPitch, this.orbitYaw, 0);
+        this.cameraNode?.lookAt(Vec3.ZERO);
+    }
+
+    /** 拖动环视：抬起/取消 */
+    private onDragEnd(): void {
+        this.dragging = false;
+    }
+
+    /**
+     * 首次实际拖动时接管视角：停掉开场推镜，以当前角度为环视基准；
+     * 同时补一段短动画把相机送到尾部距离，避免用户在深空拖动。
+     */
+    private takeOverView(): void {
+        if (this.viewTakenOver) return;
+        this.viewTakenOver = true;
+        this.stopDolly();
+        if (this.cameraNode) {
+            tween(this.cameraNode)
+                .to(TAKEOVER_DOLLY, { position: new Vec3(0, Z_TAIL * ANGLE_TAN, Z_TAIL) }, { easing: 'cubicOut' })
+                .start();
+        }
+        if (this.cameraRig) {
+            const cur = this.cameraRig.eulerAngles;
+            this.orbitYaw = cur.y;
+            this.orbitPitch = cur.x;
+        }
+    }
+
+    private stopDolly(): void {
+        if (this.dollyTween) {
+            this.dollyTween.stop();
+            this.dollyTween = null;
+        }
     }
 
     private fitShipWithRetry(ship: Node): void {
