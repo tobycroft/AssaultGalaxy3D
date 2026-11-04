@@ -17,8 +17,9 @@ import {
     MeshRenderer,
     DirectionalLight,
     Camera,
+    sys,
 } from 'cc';
-import { fadeIn, pressEffect } from '../../Common/UIAnim';
+import { fadeIn, fadeOutThen, pressEffect } from '../../Common/UIAnim';
 import { paintTechButton, TechText, techTextColor } from '../../Common/TechUI';
 import { ExitOnBack } from '../../Common/ExitOnBack';
 
@@ -32,6 +33,8 @@ const MODEL_LAYER = 1;
 const TARGET_SHIP_SIZE = 380;
 // 机库飞机模型目录（resources 下）
 const SHIP_DIR = 'Model/spaceship';
+// 当前出战飞机的本地存储 key（与 Universe 场景共用）
+const ACTIVE_SHIP_KEY = 'ag_active_ship';
 // 机库深色背景色（相机清屏色，与旧全屏 Graphics 填充色一致）
 const BG_COLOR = new Color(10, 18, 32, 255);
 
@@ -52,6 +55,10 @@ export class Hangar extends Component {
     private shipButtons: Node[] = [];
     /** 是否自动旋转展示 */
     private spin = true;
+    /** 当前选中的飞机（resources 路径，出击时带入宇宙场景） */
+    private activePath = sys.localStorage.getItem(ACTIVE_SHIP_KEY) || '';
+    /** 防止重复触发出击 */
+    private launching = false;
 
     onLoad(): void {
         this.addLights();
@@ -59,6 +66,7 @@ export class Hangar extends Component {
         this.buildBackground();
         this.buildUI();
         this.setupModelRoot();
+        this.buildLaunchButton();
         this.loadShips();
         // 游戏内退出监听：Android 返回键 / ESC 触发确认退出弹窗
         this.node.addComponent(ExitOnBack);
@@ -188,7 +196,7 @@ export class Hangar extends Component {
         });
     }
 
-    /** 生成底部飞机选择按钮并默认展示第一架 */
+    /** 生成底部飞机选择按钮并默认展示上次出战的那一架（无记录则第一架） */
     private showShips(items: { path: string; prefab: Prefab }[]): void {
         const n = items.length;
         const w = 240;
@@ -199,21 +207,48 @@ export class Hangar extends Component {
             const label = item.path.split('/').pop() || 'ship';
             const x = -totalW / 2 + w / 2 + i * (w + gap);
             const btn = this.createButton('BtnShip_' + label, label, x, -300, w, h, () => {
-                this.displayShip(item.prefab, label);
+                this.displayShip(item.prefab, label, item.path);
             });
             pressEffect(btn);
             this.shipButtons.push(btn);
             fadeIn(btn, new Vec3(0, 20, 0), 0.05 * i);
         });
-        // 默认展示第一架
-        const first = items[0];
+        // 默认展示上次出战的那一架，找不到则第一架
+        let defaultIndex = 0;
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].path === this.activePath) defaultIndex = i;
+        }
+        const first = items[defaultIndex];
         const firstName = first.path.split('/').pop() || 'ship';
-        this.displayShip(first.prefab, firstName);
-        this.setStatus('共 ' + n + ' 架飞机，点击下方按钮切换');
+        this.displayShip(first.prefab, firstName, first.path);
+        this.setStatus('共 ' + n + ' 架飞机，点击下方按钮切换，选中后点击「出击」');
+    }
+
+    /** 底部中央的出击按钮：保存选中飞机并淡出进入自由飞行宇宙 */
+    private buildLaunchButton(): void {
+        const btn = this.createButton('BtnLaunch', '出击 · 离开空间站', 430, -300, 260, 56, () => {
+            this.launch();
+        });
+        pressEffect(btn);
+        fadeIn(btn, new Vec3(0, 24, 0), 0.15);
+    }
+
+    /** 出击：记录当前飞机 → 淡出机库 UI → 加载宇宙场景 */
+    private launch(): void {
+        if (this.launching) return;
+        if (!this.activePath) {
+            this.setStatus('尚未选择飞机');
+            return;
+        }
+        this.launching = true;
+        sys.localStorage.setItem(ACTIVE_SHIP_KEY, this.activePath);
+        this.setStatus('正在离开空间站…');
+        fadeOutThen(this.node, 0.4, () => director.loadScene('Universe'));
     }
 
     /** 展示指定飞机（清除旧模型，包围盒适配后居中到展示台） */
-    private displayShip(prefab: Prefab, name: string): void {
+    private displayShip(prefab: Prefab, name: string, path: string): void {
+        this.activePath = path;
         this.clearShip();
         const ship = instantiate(prefab);
         this.modelRoot!.addChild(ship);
